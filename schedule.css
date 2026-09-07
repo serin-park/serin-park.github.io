@@ -61,6 +61,19 @@
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.04);
 }
 
+.sync-account-card.is-highlighted {
+  animation: sync-account-highlight 900ms ease-out;
+}
+
+@keyframes sync-account-highlight {
+  0%, 35% {
+    box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.2), 0 10px 32px rgba(0, 0, 0, 0.04);
+  }
+  100% {
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.04);
+  }
+}
+
 .sync-account-card strong {
   display: block;
   color: #1d1d1f;

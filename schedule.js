@@ -78,6 +78,7 @@ const authLogoutButton = document.querySelector("#authLogoutButton");
 const authMessage = document.querySelector("#authMessage");
 const syncStatus = document.querySelector("#syncStatus");
 const syncNowButton = document.querySelector("#syncNowButton");
+const syncAccountCard = document.querySelector("#syncAccountCard");
 
 let events = loadEvents();
 let categoryOrder = loadCategoryOrder();
@@ -110,6 +111,7 @@ let cloudSyncTimer = null;
 let applyingCloudState = false;
 let cloudSyncInFlight = null;
 let cloudSyncQueued = false;
+let demoMode = false;
 
 function loadEvents() {
   try {
@@ -122,6 +124,7 @@ function loadEvents() {
 }
 
 function saveEvents() {
+  if (demoMode) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
   queueCloudSync();
 }
@@ -148,6 +151,7 @@ function loadNotes() {
 }
 
 function saveNotes() {
+  if (demoMode) return;
   localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
   queueCloudSync();
 }
@@ -163,6 +167,7 @@ function loadCategoryOrder() {
 }
 
 function saveCategoryOrder() {
+  if (demoMode) return;
   localStorage.setItem(CATEGORY_ORDER_KEY, JSON.stringify(categoryOrder));
   queueCloudSync();
 }
@@ -188,6 +193,7 @@ function loadHomeVisibility() {
 }
 
 function saveHomeSettings() {
+  if (demoMode) return;
   if (homeLocation) {
     localStorage.setItem(HOME_LOCATION_KEY, JSON.stringify(homeLocation));
   } else {
@@ -215,17 +221,259 @@ function setSyncStatus(message, state = "") {
   syncStatus.dataset.state = state;
 }
 
+function demoDate(daysFromToday) {
+  const date = new Date();
+  date.setDate(date.getDate() + daysFromToday);
+  return dateInputValue(date);
+}
+
+function demoEvents() {
+  return [
+    normalizeEventTodos({
+      id: "demo-yesterday-book-club",
+      title: "독서 모임",
+      date: demoDate(-1),
+      startTime: "19:00",
+      endTime: "20:30",
+      locationType: "offline",
+      location: "합정동 북카페",
+      locationDetail: "2층 모임 공간",
+      locationAddress: "서울특별시 마포구 합정동",
+      latitude: 37.5495,
+      longitude: 126.9139,
+      category: "SOCIAL",
+      reservationStatus: "booked",
+      notes: "어제 완료된 일정의 회색 표시 예시예요.",
+      todos: []
+    }),
+    normalizeEventTodos({
+      id: "demo-online-meeting",
+      title: "주간 온라인 미팅",
+      date: demoDate(0),
+      startTime: "09:30",
+      endTime: "10:20",
+      locationType: "online",
+      url: "https://example.com",
+      category: "WORK",
+      reservationStatus: "none",
+      notes: "로그인하면 나만의 일정으로 바꿀 수 있어요.",
+      todos: [{
+        id: "demo-agenda",
+        title: "회의 안건 정리",
+        dueDate: demoDate(0),
+        dueTime: "09:00",
+        submissionRequired: false,
+        completed: true
+      }]
+    }),
+    normalizeEventTodos({
+      id: "demo-brunch",
+      title: "친구와 브런치",
+      date: demoDate(0),
+      startTime: "12:00",
+      endTime: "13:30",
+      locationType: "offline",
+      location: "연남동 경의선숲길",
+      locationDetail: "홍대입구역 3번 출구 근처",
+      locationAddress: "서울특별시 마포구 연남동",
+      latitude: 37.56205,
+      longitude: 126.92494,
+      category: "SOCIAL",
+      reservationStatus: "booked",
+      notes: "예약자 이름 확인하기",
+      todos: []
+    }),
+    normalizeEventTodos({
+      id: "demo-station-pickup",
+      title: "서울역에서 친구 마중",
+      date: demoDate(0),
+      startTime: "15:30",
+      endTime: "16:10",
+      locationType: "offline",
+      location: "서울역",
+      locationDetail: "KTX 도착층",
+      locationAddress: "서울특별시 용산구 한강대로 405",
+      latitude: 37.5558,
+      longitude: 126.972,
+      category: "ERRAND",
+      reservationStatus: "none",
+      notes: "도착 시간 다시 확인하기",
+      todos: [{
+        id: "demo-train-time",
+        title: "열차 도착 시간 확인",
+        dueDate: demoDate(0),
+        dueTime: "15:00",
+        submissionRequired: false,
+        completed: false
+      }]
+    }),
+    normalizeEventTodos({
+      id: "demo-exhibition",
+      title: "저녁 전시 관람",
+      date: demoDate(0),
+      startTime: "18:30",
+      endTime: "20:00",
+      locationType: "offline",
+      location: "서울시립미술관",
+      locationDetail: "서소문본관",
+      locationAddress: "서울특별시 중구 덕수궁길 61",
+      latitude: 37.5641,
+      longitude: 126.9738,
+      category: "LIFE",
+      reservationStatus: "needed",
+      notes: "이 일정은 데모용 샘플입니다.",
+      todos: [{
+        id: "demo-ticket",
+        title: "입장권 확인",
+        dueDate: demoDate(0),
+        dueTime: "17:30",
+        submissionRequired: false,
+        completed: false
+      }]
+    }),
+    normalizeEventTodos({
+      id: "demo-fitness",
+      title: "필라테스 수업",
+      date: demoDate(1),
+      startTime: "19:00",
+      endTime: "20:00",
+      locationType: "offline",
+      location: "신촌",
+      locationDetail: "운동 스튜디오",
+      locationAddress: "서울특별시 서대문구 신촌동",
+      latitude: 37.5563,
+      longitude: 126.9384,
+      category: "HEALTH",
+      reservationStatus: "booked",
+      notes: "운동복과 물 챙기기",
+      todos: []
+    }),
+    normalizeEventTodos({
+      id: "demo-online-class",
+      title: "온라인 강의 듣기",
+      date: demoDate(2),
+      startTime: "",
+      endTime: "",
+      locationType: "online",
+      url: "https://example.com/class",
+      category: "STUDY",
+      reservationStatus: "none",
+      notes: "시간이 정해지지 않은 종일 일정 예시예요.",
+      todos: [{
+        id: "demo-assignment",
+        title: "과제 초안 제출",
+        dueDate: demoDate(3),
+        dueTime: "23:59",
+        submissionRequired: true,
+        completed: false
+      }]
+    }),
+    normalizeEventTodos({
+      id: "demo-hotel-cancellation",
+      title: "주말 호텔 예약",
+      date: demoDate(3),
+      startTime: "15:00",
+      endTime: "",
+      locationType: "offline",
+      location: "홍대입구",
+      locationDetail: "예약한 호텔",
+      locationAddress: "서울특별시 마포구 동교동",
+      latitude: 37.5572,
+      longitude: 126.9236,
+      category: "TRAVEL",
+      reservationStatus: "considering",
+      reservationRequired: true,
+      reservationCompleted: true,
+      cancellationDeadline: `${demoDate(1)}T18:00`,
+      cancellationNotes: "내일 오후 6시 전까지 취소하면 수수료가 없어요.",
+      notes: "일정이 확정되지 않아 취소 여부를 결정해야 해요.",
+      todos: []
+    }),
+    normalizeEventTodos({
+      id: "demo-workshop",
+      title: "디자인 워크숍",
+      date: demoDate(4),
+      startTime: "13:00",
+      endTime: "17:00",
+      locationType: "offline",
+      location: "성수동",
+      locationDetail: "스튜디오",
+      locationAddress: "서울특별시 성동구 성수동2가",
+      latitude: 37.5446,
+      longitude: 127.0557,
+      category: "STUDY",
+      reservationStatus: "booked",
+      notes: "데모 화면을 자유롭게 둘러보세요.",
+      todos: []
+    })
+  ];
+}
+
+function activateDemoMode() {
+  const today = new Date();
+  demoMode = true;
+  events = demoEvents();
+  categoryOrder = ["WORK", "SOCIAL", "ERRAND", "LIFE", "HEALTH", "STUDY", "TRAVEL"];
+  notes = [];
+  homeLocation = {
+    latitude: 37.555184,
+    longitude: 126.93691,
+    name: "신촌역",
+    address: "서울특별시 마포구 노고산동 31-11"
+  };
+  homeVisible = true;
+  selectedCategories = new Set(categoryOrder);
+  selectedEventId = null;
+  selectedNoteId = null;
+  timelineStartDate = dateInputValue(today);
+  timelineEndDate = "";
+  hasExplicitDateFilter = false;
+  selectingCalendarRangeEnd = false;
+  selectedMapDate = dateInputValue(today);
+  calendarCursor = new Date(today.getFullYear(), today.getMonth(), 1);
+  showIdleForm();
+  renderAll();
+}
+
+function restorePrivateLocalState() {
+  if (!demoMode) return;
+  demoMode = false;
+  events = loadEvents();
+  categoryOrder = loadCategoryOrder();
+  notes = loadNotes();
+  homeLocation = loadHomeLocation();
+  homeVisible = loadHomeVisibility() && Boolean(homeLocation);
+  selectedCategories = new Set(events.map((event) => normalizedCategory(event.category || "ETC")));
+  selectedEventId = null;
+  selectedNoteId = null;
+}
+
+function requireSignIn(message = "로그인하면 내 일정을 추가하고 변경할 수 있어요.") {
+  if (currentUser) return true;
+  authMessage.textContent = message;
+  syncAccountCard.scrollIntoView({ behavior: "smooth", block: "center" });
+  syncAccountCard.classList.remove("is-highlighted");
+  window.requestAnimationFrame(() => syncAccountCard.classList.add("is-highlighted"));
+  window.setTimeout(() => syncAccountCard.classList.remove("is-highlighted"), 900);
+  authEmailInput.focus({ preventScroll: true });
+  return false;
+}
+
 function updateAuthView() {
   const signedIn = Boolean(currentUser);
   authSignedOut.hidden = signedIn;
   authSignedIn.hidden = !signedIn;
   authUserEmail.textContent = currentUser?.email || "로그인됨";
   document.querySelectorAll("[data-auth-required]").forEach((section) => {
-    section.hidden = !signedIn;
+    section.hidden = false;
   });
+  document.body.classList.toggle("is-demo", !signedIn);
   if (!signedIn) setSyncStatus("");
-  if (signedIn && plannerMap) {
-    window.setTimeout(() => plannerMap.invalidateSize(), 0);
+  if (plannerMap) {
+    window.setTimeout(() => {
+      plannerMap.invalidateSize();
+      renderPlannerMap();
+    }, 0);
   }
 }
 
@@ -399,6 +647,7 @@ async function syncFromCloud() {
 
 async function handleSignedIn(user) {
   const changedAccount = cloudOwnerId && cloudOwnerId !== user.id;
+  restorePrivateLocalState();
   currentUser = user;
   if (changedAccount) {
     cloudCalendarId = "";
@@ -443,7 +692,9 @@ async function sendLoginLink() {
 async function initializeCloudSync() {
   const config = window.SERIN_SUPABASE_CONFIG;
   if (!window.supabase?.createClient || !config?.url || !config?.publishableKey) {
-    authMessage.textContent = "동기화 서비스를 불러오지 못했어요. 이 기기에는 계속 저장됩니다.";
+    activateDemoMode();
+    updateAuthView();
+    authMessage.textContent = "동기화 서비스를 불러오지 못했어요. 데모만 둘러볼 수 있습니다.";
     return;
   }
 
@@ -474,6 +725,7 @@ async function initializeCloudSync() {
         handleSignedIn(session.user);
       } else if (event === "SIGNED_OUT") {
         currentUser = null;
+        activateDemoMode();
         authMessage.textContent = "로그아웃됐어요. 일정은 이 기기에도 남아 있습니다.";
         updateAuthView();
       }
@@ -501,6 +753,7 @@ async function initializeCloudSync() {
   } else if (session?.user) {
     await handleSignedIn(session.user);
   } else {
+    activateDemoMode();
     updateAuthView();
   }
 }
@@ -651,6 +904,13 @@ function dateMatchesActiveFilter(date) {
   if (timelineStartDate && date < timelineStartDate) return false;
   if (timelineEndDate && date > timelineEndDate) return false;
   return true;
+}
+
+function dateMatchesTimelineFilter(date) {
+  if (demoMode && !hasExplicitDateFilter) {
+    return date >= demoDate(-1);
+  }
+  return dateMatchesActiveFilter(date);
 }
 
 function resetCalendarDateFilter() {
@@ -915,6 +1175,7 @@ function isEventElapsed(event) {
   const today = dateInputValue(new Date());
   if (event.date < today) return true;
   if (event.date > today) return false;
+  if (demoMode) return false;
 
   const comparisonTime = event.endTime || event.startTime;
   if (!comparisonTime) return false;
@@ -1277,7 +1538,7 @@ function renderTimeline() {
       });
   });
 
-  const sorted = timelineEntries.filter((entry) => dateMatchesActiveFilter(entry.date)).sort((a, b) => {
+  const sorted = timelineEntries.filter((entry) => dateMatchesTimelineFilter(entry.date)).sort((a, b) => {
     const dateComparison = a.date.localeCompare(b.date);
     if (dateComparison) return dateComparison;
     if (Boolean(a.time) !== Boolean(b.time)) return a.time ? 1 : -1;
@@ -1502,6 +1763,10 @@ function setupCategoryDragSorting(container) {
   container.addEventListener("dragstart", (dragEvent) => {
     const item = dragEvent.target.closest("[data-category]");
     if (!item || !container.contains(item)) return;
+    if (!requireSignIn("로그인하면 카테고리 순서를 변경할 수 있어요.")) {
+      dragEvent.preventDefault();
+      return;
+    }
     draggedCategoryItem = item;
     draggedCategoryContainer = container;
     dragEvent.dataTransfer.effectAllowed = "move";
@@ -2002,6 +2267,7 @@ function showIdleForm() {
 }
 
 function startNewEvent() {
+  if (!requireSignIn("로그인하면 새 일정을 추가할 수 있어요.")) return;
   selectedEventId = null;
   clearFormValues();
   applyFormMode("create");
@@ -2050,6 +2316,7 @@ function showEventInForm(id, mode = "view") {
 }
 
 function activateEventEditing(target) {
+  if (!requireSignIn("로그인하면 일정을 변경할 수 있어요.")) return;
   if (formMode !== "view") return;
   applyFormMode("edit");
 
@@ -2068,6 +2335,7 @@ function cancelFormEditing() {
 }
 
 function deleteEvent(id) {
+  if (!requireSignIn("로그인하면 일정을 삭제할 수 있어요.")) return;
   const event = events.find((item) => item.id === id);
   if (!event || !window.confirm(`“${event.title}” 일정을 삭제할까요?`)) return;
   events = events.filter((item) => item.id !== id);
@@ -2077,6 +2345,10 @@ function deleteEvent(id) {
 }
 
 function updateTodoTask(eventId, todoId, completed) {
+  if (!requireSignIn("로그인하면 할 일 상태를 변경할 수 있어요.")) {
+    renderAll();
+    return;
+  }
   events = events.map((event) => event.id === eventId
     ? {
         ...event,
@@ -2089,6 +2361,10 @@ function updateTodoTask(eventId, todoId, completed) {
 }
 
 function updateReservationTask(id, completed) {
+  if (!requireSignIn("로그인하면 예약 상태를 변경할 수 있어요.")) {
+    renderAll();
+    return;
+  }
   events = events.map((event) => event.id === id
     ? {
         ...event,
@@ -2102,6 +2378,7 @@ function updateReservationTask(id, completed) {
 }
 
 function renameCategory(oldName, requestedName) {
+  if (!requireSignIn("로그인하면 카테고리를 변경할 수 있어요.")) return;
   const newName = normalizedCategory(requestedName);
   if (!requestedName.trim()) {
     window.alert("새 카테고리 이름을 입력해주세요.");
@@ -2129,6 +2406,7 @@ function renameCategory(oldName, requestedName) {
 
 form.addEventListener("submit", (submitEvent) => {
   submitEvent.preventDefault();
+  if (!requireSignIn("로그인하면 일정을 저장할 수 있어요.")) return;
   const id = document.querySelector("#eventId").value;
   const startTime = normalizeTime(document.querySelector("#startTime").value);
   const endTime = normalizeTime(document.querySelector("#endTime").value);
@@ -2249,6 +2527,10 @@ locationInput.addEventListener("keydown", (keyEvent) => {
   }
 });
 homeMapToggle.addEventListener("change", () => {
+  if (!requireSignIn("로그인하면 집 위치 표시를 변경할 수 있어요.")) {
+    homeMapToggle.checked = false;
+    return;
+  }
   if (homeMapToggle.checked && !homeLocation) {
     homeVisible = false;
     homeMapToggle.checked = false;
@@ -2261,6 +2543,7 @@ homeMapToggle.addEventListener("change", () => {
   renderPlannerMap();
 });
 homeLocationButton.addEventListener("click", () => {
+  if (!requireSignIn("로그인하면 집 위치를 설정할 수 있어요.")) return;
   if (homeLocationEditor.hidden) openHomeLocationEditor();
   else closeHomeLocationEditor();
 });
@@ -2283,6 +2566,7 @@ homeLocationInput.addEventListener("keydown", (keyEvent) => {
   if (keyEvent.key === "Escape") closeHomeLocationEditor();
 });
 homeLocationRemoveButton.addEventListener("click", () => {
+  if (!requireSignIn("로그인하면 집 위치를 삭제할 수 있어요.")) return;
   if (!window.confirm("이 브라우저에 저장된 집 위치를 삭제할까요?")) return;
   homeLocation = null;
   homeVisible = false;
@@ -2321,11 +2605,23 @@ document.querySelectorAll('input[name="locationType"]').forEach((input) => {
 
 form.addEventListener("click", (clickEvent) => {
   if (formMode !== "view") return;
+  if (!currentUser) {
+    clickEvent.preventDefault();
+    clickEvent.stopPropagation();
+    requireSignIn("로그인하면 이 일정을 변경할 수 있어요.");
+    return;
+  }
   activateEventEditing(clickEvent.target);
 }, true);
 
 form.addEventListener("keydown", (keyEvent) => {
   if (formMode !== "view" || keyEvent.key === "Tab") return;
+  if (!currentUser) {
+    keyEvent.preventDefault();
+    keyEvent.stopPropagation();
+    requireSignIn("로그인하면 이 일정을 변경할 수 있어요.");
+    return;
+  }
   keyEvent.preventDefault();
   if (keyEvent.key === "Enter" || keyEvent.key === " ") {
     activateEventEditing(keyEvent.target);
@@ -2354,6 +2650,7 @@ document.querySelectorAll(".view-tab").forEach((button) => {
 });
 
 newNoteButton.addEventListener("click", () => {
+  if (!requireSignIn("로그인하면 새 노트를 작성할 수 있어요.")) return;
   selectedNoteId = null;
   renderNotes();
   showNoteEditor();
@@ -2362,6 +2659,7 @@ newNoteButton.addEventListener("click", () => {
 
 noteForm.addEventListener("submit", (submitEvent) => {
   submitEvent.preventDefault();
+  if (!requireSignIn("로그인하면 노트를 저장할 수 있어요.")) return;
   const now = new Date().toISOString();
   const existing = notes.find((note) => note.id === noteIdInput.value);
   const note = normalizeNote({
@@ -2384,6 +2682,7 @@ noteForm.addEventListener("submit", (submitEvent) => {
 });
 
 deleteNoteButton.addEventListener("click", () => {
+  if (!requireSignIn("로그인하면 노트를 삭제할 수 있어요.")) return;
   const note = notes.find((item) => item.id === noteIdInput.value);
   if (!note || !window.confirm(`“${note.title || "제목 없는 노트"}” 노트를 삭제할까요?`)) return;
   notes = notes.filter((item) => item.id !== note.id);
@@ -2395,6 +2694,7 @@ deleteNoteButton.addEventListener("click", () => {
 calendarFilterResetButton.addEventListener("click", resetCalendarDateFilter);
 
 clearButton.addEventListener("click", () => {
+  if (!requireSignIn("로그인하면 내 데이터를 관리할 수 있어요.")) return;
   if ((!events.length && !notes.length) || !window.confirm("저장된 일정과 노트를 모두 삭제할까요? 이 작업은 되돌릴 수 없어요.")) return;
   events = [];
   notes = [];
@@ -2409,6 +2709,7 @@ clearButton.addEventListener("click", () => {
 });
 
 exportButton.addEventListener("click", () => {
+  if (!requireSignIn("로그인하면 내 데이터를 백업할 수 있어요.")) return;
   const backup = { version: 7, events, categoryOrder, notes, homeLocation, homeVisible };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -2419,7 +2720,17 @@ exportButton.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
+importInput.addEventListener("click", (clickEvent) => {
+  if (currentUser) return;
+  clickEvent.preventDefault();
+  requireSignIn("로그인하면 백업 데이터를 불러올 수 있어요.");
+});
+
 importInput.addEventListener("change", async () => {
+  if (!requireSignIn("로그인하면 백업 데이터를 불러올 수 있어요.")) {
+    importInput.value = "";
+    return;
+  }
   const file = importInput.files?.[0];
   if (!file) return;
 
