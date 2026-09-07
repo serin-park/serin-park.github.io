@@ -2,6 +2,7 @@ const STORAGE_KEY = "serin-schedule-events-v1";
 const CATEGORY_ORDER_KEY = "serin-schedule-category-order-v1";
 const HOME_LOCATION_KEY = "serin-schedule-home-location-v1";
 const HOME_VISIBLE_KEY = "serin-schedule-home-visible-v1";
+const NOTES_KEY = "serin-schedule-notes-v1";
 const CLOUD_CALENDAR_KEY = "serin-schedule-cloud-calendar-v1";
 const CLOUD_OWNER_KEY = "serin-schedule-cloud-owner-v1";
 
@@ -30,6 +31,16 @@ const categoryManagerList = document.querySelector("#categoryManagerList");
 const timelineView = document.querySelector("#timelineView");
 const categoriesView = document.querySelector("#categoriesView");
 const tasksView = document.querySelector("#tasksView");
+const notesView = document.querySelector("#notesView");
+const notesList = document.querySelector("#notesList");
+const newNoteButton = document.querySelector("#newNoteButton");
+const noteEditorEmpty = document.querySelector("#noteEditorEmpty");
+const noteForm = document.querySelector("#noteForm");
+const noteIdInput = document.querySelector("#noteId");
+const noteTitleInput = document.querySelector("#noteTitle");
+const noteBodyInput = document.querySelector("#noteBody");
+const noteSaveStatus = document.querySelector("#noteSaveStatus");
+const deleteNoteButton = document.querySelector("#deleteNoteButton");
 const calendarPrevButton = document.querySelector("#calendarPrevButton");
 const calendarNextButton = document.querySelector("#calendarNextButton");
 const calendarMonthLabel = document.querySelector("#calendarMonthLabel");
@@ -70,10 +81,12 @@ const syncNowButton = document.querySelector("#syncNowButton");
 
 let events = loadEvents();
 let categoryOrder = loadCategoryOrder();
+let notes = loadNotes();
 let selectedCategories = new Set(events.map((event) => normalizedCategory(event.category || "ETC")));
 let draggedCategoryItem = null;
 let draggedCategoryContainer = null;
 let selectedEventId = null;
+let selectedNoteId = null;
 let formMode = "idle";
 let timelineStartDate = dateInputValue(new Date());
 let timelineEndDate = "";
@@ -110,6 +123,32 @@ function loadEvents() {
 
 function saveEvents() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
+  queueCloudSync();
+}
+
+function normalizeNote(note = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: note.id || crypto.randomUUID(),
+    title: String(note.title || ""),
+    body: String(note.body || ""),
+    createdAt: note.createdAt || now,
+    updatedAt: note.updatedAt || note.createdAt || now
+  };
+}
+
+function loadNotes() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(NOTES_KEY) || "[]");
+    return Array.isArray(saved) ? saved.map(normalizeNote) : [];
+  } catch (error) {
+    console.error("저장된 노트를 불러오지 못했습니다.", error);
+    return [];
+  }
+}
+
+function saveNotes() {
+  localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
   queueCloudSync();
 }
 
@@ -160,9 +199,10 @@ function saveHomeSettings() {
 
 function plannerState() {
   return {
-    version: 6,
+    version: 7,
     events,
     categoryOrder,
+    notes,
     homeLocation,
     homeVisible,
     savedAt: new Date().toISOString()
@@ -193,6 +233,7 @@ function storePlannerState(state) {
   const incomingEvents = Array.isArray(state?.events) ? state.events : [];
   const incomingCategoryOrder = Array.isArray(state?.categoryOrder) ? state.categoryOrder : [];
   const incomingHome = state?.homeLocation;
+  const incomingNotes = Array.isArray(state?.notes) ? state.notes : [];
 
   applyingCloudState = true;
   events = incomingEvents.map((event) => normalizeEventTodos({
@@ -201,6 +242,7 @@ function storePlannerState(state) {
     category: normalizedCategory(event.category || "ETC")
   }));
   categoryOrder = incomingCategoryOrder.map(normalizedCategory);
+  notes = incomingNotes.map(normalizeNote);
   homeLocation = incomingHome && Number.isFinite(Number(incomingHome.latitude)) && Number.isFinite(Number(incomingHome.longitude))
     ? {
         latitude: Number(incomingHome.latitude),
@@ -211,9 +253,11 @@ function storePlannerState(state) {
     : null;
   homeVisible = Boolean(state?.homeVisible && homeLocation);
   selectedCategories = new Set(events.map((event) => event.category));
+  if (!notes.some((note) => note.id === selectedNoteId)) selectedNoteId = null;
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
   localStorage.setItem(CATEGORY_ORDER_KEY, JSON.stringify(categoryOrder));
+  localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
   if (homeLocation) {
     localStorage.setItem(HOME_LOCATION_KEY, JSON.stringify(homeLocation));
   } else {
@@ -232,10 +276,20 @@ function mergedPlannerState(localState, cloudState) {
 
   const cloudCategories = Array.isArray(cloudState?.categoryOrder) ? cloudState.categoryOrder : [];
   const localCategories = Array.isArray(localState?.categoryOrder) ? localState.categoryOrder : [];
+  const mergedNotes = new Map();
+  [
+    ...(Array.isArray(localState?.notes) ? localState.notes : []),
+    ...(Array.isArray(cloudState?.notes) ? cloudState.notes : [])
+  ].forEach((rawNote) => {
+    const note = normalizeNote(rawNote);
+    const existing = mergedNotes.get(note.id);
+    if (!existing || String(note.updatedAt) >= String(existing.updatedAt)) mergedNotes.set(note.id, note);
+  });
   return {
-    version: 6,
+    version: 7,
     events: [...mergedEvents.values()],
     categoryOrder: [...new Set([...cloudCategories, ...localCategories])],
+    notes: [...mergedNotes.values()],
     homeLocation: cloudState?.homeLocation || localState?.homeLocation || null,
     homeVisible: cloudState?.homeLocation
       ? Boolean(cloudState.homeVisible)
@@ -1605,10 +1659,71 @@ function renderTasks() {
   }
 }
 
+function noteTimestamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function showNoteEditor(note = null) {
+  noteEditorEmpty.hidden = true;
+  noteForm.hidden = false;
+  noteIdInput.value = note?.id || "";
+  noteTitleInput.value = note?.title || "";
+  noteBodyInput.value = note?.body || "";
+  noteSaveStatus.textContent = note?.updatedAt ? `${noteTimestamp(note.updatedAt)} 수정` : "새 노트";
+  deleteNoteButton.hidden = !note;
+}
+
+function showEmptyNoteEditor() {
+  noteForm.hidden = true;
+  noteEditorEmpty.hidden = false;
+  noteIdInput.value = "";
+  noteTitleInput.value = "";
+  noteBodyInput.value = "";
+  noteSaveStatus.textContent = "";
+}
+
+function renderNotes() {
+  notesList.replaceChildren();
+  const sortedNotes = [...notes].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+
+  if (!sortedNotes.length) {
+    notesList.append(element("p", "notes-list-empty", "아직 작성한 노트가 없어요."));
+  } else {
+    sortedNotes.forEach((note) => {
+      const button = element("button", `note-list-item${note.id === selectedNoteId ? " is-active" : ""}`);
+      button.type = "button";
+      const preview = note.body.trim().replace(/\s+/g, " ") || "내용 없음";
+      button.append(
+        element("strong", "", note.title.trim() || "제목 없는 노트"),
+        element("span", "note-list-preview", preview),
+        element("time", "", noteTimestamp(note.updatedAt))
+      );
+      button.addEventListener("click", () => {
+        selectedNoteId = note.id;
+        renderNotes();
+        showNoteEditor(note);
+      });
+      notesList.append(button);
+    });
+  }
+
+  const selectedNote = notes.find((note) => note.id === selectedNoteId);
+  if (selectedNote) showNoteEditor(selectedNote);
+  else if (noteForm.hidden || noteIdInput.value) showEmptyNoteEditor();
+}
+
 function renderAll() {
   renderTimeline();
   renderCategories();
   renderTasks();
+  renderNotes();
   renderCategoryControls();
   renderPlannerOverview();
 }
@@ -2238,21 +2353,63 @@ document.querySelectorAll(".view-tab").forEach((button) => {
   });
 });
 
+newNoteButton.addEventListener("click", () => {
+  selectedNoteId = null;
+  renderNotes();
+  showNoteEditor();
+  noteTitleInput.focus();
+});
+
+noteForm.addEventListener("submit", (submitEvent) => {
+  submitEvent.preventDefault();
+  const now = new Date().toISOString();
+  const existing = notes.find((note) => note.id === noteIdInput.value);
+  const note = normalizeNote({
+    id: existing?.id || crypto.randomUUID(),
+    title: noteTitleInput.value.trim(),
+    body: noteBodyInput.value,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  });
+
+  if (existing) {
+    notes = notes.map((item) => item.id === existing.id ? note : item);
+  } else {
+    notes.push(note);
+  }
+  selectedNoteId = note.id;
+  saveNotes();
+  renderNotes();
+  noteSaveStatus.textContent = "저장됨";
+});
+
+deleteNoteButton.addEventListener("click", () => {
+  const note = notes.find((item) => item.id === noteIdInput.value);
+  if (!note || !window.confirm(`“${note.title || "제목 없는 노트"}” 노트를 삭제할까요?`)) return;
+  notes = notes.filter((item) => item.id !== note.id);
+  selectedNoteId = null;
+  saveNotes();
+  renderNotes();
+});
+
 calendarFilterResetButton.addEventListener("click", resetCalendarDateFilter);
 
 clearButton.addEventListener("click", () => {
-  if (!events.length || !window.confirm("저장된 일정을 모두 삭제할까요? 이 작업은 되돌릴 수 없어요.")) return;
+  if ((!events.length && !notes.length) || !window.confirm("저장된 일정과 노트를 모두 삭제할까요? 이 작업은 되돌릴 수 없어요.")) return;
   events = [];
+  notes = [];
   categoryOrder = [];
   selectedCategories.clear();
+  selectedNoteId = null;
   saveEvents();
+  saveNotes();
   saveCategoryOrder();
   showIdleForm();
   renderAll();
 });
 
 exportButton.addEventListener("click", () => {
-  const backup = { version: 5, events, categoryOrder };
+  const backup = { version: 7, events, categoryOrder, notes, homeLocation, homeVisible };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -2276,8 +2433,11 @@ importInput.addEventListener("change", async () => {
       category: normalizedCategory(event.category || "ETC")
     }));
     categoryOrder = Array.isArray(imported.categoryOrder) ? imported.categoryOrder : [];
+    notes = Array.isArray(imported.notes) ? imported.notes.map(normalizeNote) : [];
     selectedCategories = new Set(events.map((event) => event.category));
+    selectedNoteId = null;
     saveEvents();
+    saveNotes();
     saveCategoryOrder();
     showIdleForm();
     renderAll();

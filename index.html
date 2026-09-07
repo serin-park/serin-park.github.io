@@ -269,12 +269,41 @@
             <button class="view-tab is-active" type="button" data-view="timeline" role="tab" aria-selected="true">시간순</button>
             <button class="view-tab" type="button" data-view="categories" role="tab" aria-selected="false">카테고리</button>
             <button class="view-tab" type="button" data-view="tasks" role="tab" aria-selected="false">할 일</button>
+            <button class="view-tab" type="button" data-view="notes" role="tab" aria-selected="false">노트</button>
           </div>
         </div>
 
         <div class="view-panel" id="timelineView" data-panel="timeline"></div>
         <div class="view-panel" id="categoriesView" data-panel="categories" hidden></div>
         <div class="view-panel" id="tasksView" data-panel="tasks" hidden></div>
+        <div class="view-panel" id="notesView" data-panel="notes" hidden>
+          <div class="notes-workspace">
+            <section class="notes-sidebar" aria-label="노트 목록">
+              <div class="notes-sidebar-header">
+                <strong>Notes</strong>
+                <button class="text-button" id="newNoteButton" type="button">+ 새 노트</button>
+              </div>
+              <div class="notes-list" id="notesList"></div>
+            </section>
+
+            <section class="note-editor-card" aria-label="노트 편집기">
+              <div class="note-editor-empty" id="noteEditorEmpty">
+                <strong>자유롭게 기록해보세요.</strong>
+                <p>새 노트를 만들거나 왼쪽 목록에서 노트를 선택하세요.</p>
+              </div>
+              <form id="noteForm" hidden>
+                <input id="noteId" type="hidden">
+                <input class="note-title-input" id="noteTitle" type="text" placeholder="제목" aria-label="노트 제목">
+                <textarea class="note-body-input" id="noteBody" rows="16" placeholder="내용을 입력하세요" aria-label="노트 내용"></textarea>
+                <div class="note-editor-footer">
+                  <span id="noteSaveStatus" aria-live="polite"></span>
+                  <button class="note-delete-button" id="deleteNoteButton" type="button">삭제</button>
+                  <button class="note-save-button" type="submit">저장</button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </div>
       </section>
     </section>
 
