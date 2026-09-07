@@ -47,6 +47,10 @@
   font-size: 17px;
 }
 
+[data-auth-required][hidden] {
+  display: none !important;
+}
+
 .sync-account-card {
   max-width: 430px;
   margin-top: 24px;
