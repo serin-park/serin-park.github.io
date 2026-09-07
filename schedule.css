@@ -47,6 +47,113 @@
   font-size: 17px;
 }
 
+.sync-account-card {
+  max-width: 430px;
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid var(--planner-border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.04);
+}
+
+.sync-account-card strong {
+  display: block;
+  color: #1d1d1f;
+  font-size: 13px;
+}
+
+.sync-account-card p {
+  margin: 4px 0 12px;
+  color: #6e6e73;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.auth-email-row,
+.sync-account-heading,
+.sync-account-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-email-row input {
+  min-width: 0;
+  flex: 1;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(29, 29, 31, 0.13);
+  border-radius: 10px;
+  background: #fff;
+  color: #1d1d1f;
+  font: inherit;
+  font-size: 12px;
+}
+
+.auth-email-row button,
+.sync-account-actions button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--planner-blue);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.auth-email-row button:disabled,
+.sync-account-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.sync-account-heading {
+  justify-content: space-between;
+}
+
+.sync-account-heading > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.sync-account-heading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#syncStatus {
+  color: #6e6e73;
+  font-size: 10px;
+}
+
+#syncStatus[data-state="synced"] {
+  color: var(--planner-success);
+}
+
+#syncStatus[data-state="error"] {
+  color: #b42318;
+}
+
+.sync-account-actions button:last-child {
+  background: rgba(118, 118, 128, 0.12);
+  color: #6e6e73;
+}
+
+.sync-account-card .auth-message {
+  margin: 9px 0 0;
+  color: #6e6e73;
+}
+
+.sync-account-card .auth-message:empty {
+  display: none;
+}
+
 .planner-overview {
   display: grid;
   grid-template-columns: 224px minmax(0, 1fr);
@@ -2261,6 +2368,16 @@ button,
 
   .planner-intro h1 {
     font-size: 56px;
+  }
+
+  .auth-email-row,
+  .sync-account-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sync-account-actions button {
+    flex: 1;
   }
 
   .planner-overview {

@@ -2,6 +2,8 @@ const STORAGE_KEY = "serin-schedule-events-v1";
 const CATEGORY_ORDER_KEY = "serin-schedule-category-order-v1";
 const HOME_LOCATION_KEY = "serin-schedule-home-location-v1";
 const HOME_VISIBLE_KEY = "serin-schedule-home-visible-v1";
+const CLOUD_CALENDAR_KEY = "serin-schedule-cloud-calendar-v1";
+const CLOUD_OWNER_KEY = "serin-schedule-cloud-owner-v1";
 
 const form = document.querySelector("#eventForm");
 const formCard = document.querySelector(".form-card");
@@ -56,6 +58,15 @@ const locationDetailInput = document.querySelector("#locationDetail");
 const locationSearchButton = document.querySelector("#locationSearchButton");
 const locationSearchStatus = document.querySelector("#locationSearchStatus");
 const locationSearchResults = document.querySelector("#locationSearchResults");
+const authSignedOut = document.querySelector("#authSignedOut");
+const authSignedIn = document.querySelector("#authSignedIn");
+const authEmailInput = document.querySelector("#authEmailInput");
+const authLoginButton = document.querySelector("#authLoginButton");
+const authUserEmail = document.querySelector("#authUserEmail");
+const authLogoutButton = document.querySelector("#authLogoutButton");
+const authMessage = document.querySelector("#authMessage");
+const syncStatus = document.querySelector("#syncStatus");
+const syncNowButton = document.querySelector("#syncNowButton");
 
 let events = loadEvents();
 let categoryOrder = loadCategoryOrder();
@@ -78,6 +89,14 @@ let plannerMapMarkers = null;
 let locationSearchController = null;
 let homeSearchController = null;
 let lastLocationSearchAt = 0;
+let supabaseClient = null;
+let currentUser = null;
+let cloudCalendarId = localStorage.getItem(CLOUD_CALENDAR_KEY) || "";
+let cloudOwnerId = localStorage.getItem(CLOUD_OWNER_KEY) || "";
+let cloudSyncTimer = null;
+let applyingCloudState = false;
+let cloudSyncInFlight = null;
+let cloudSyncQueued = false;
 
 function loadEvents() {
   try {
@@ -91,6 +110,7 @@ function loadEvents() {
 
 function saveEvents() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
+  queueCloudSync();
 }
 
 function loadCategoryOrder() {
@@ -105,6 +125,7 @@ function loadCategoryOrder() {
 
 function saveCategoryOrder() {
   localStorage.setItem(CATEGORY_ORDER_KEY, JSON.stringify(categoryOrder));
+  queueCloudSync();
 }
 
 function loadHomeLocation() {
@@ -134,6 +155,300 @@ function saveHomeSettings() {
     localStorage.removeItem(HOME_LOCATION_KEY);
   }
   localStorage.setItem(HOME_VISIBLE_KEY, String(homeVisible));
+  queueCloudSync();
+}
+
+function plannerState() {
+  return {
+    version: 6,
+    events,
+    categoryOrder,
+    homeLocation,
+    homeVisible,
+    savedAt: new Date().toISOString()
+  };
+}
+
+function setSyncStatus(message, state = "") {
+  if (!syncStatus) return;
+  syncStatus.textContent = message;
+  syncStatus.dataset.state = state;
+}
+
+function updateAuthView() {
+  const signedIn = Boolean(currentUser);
+  authSignedOut.hidden = signedIn;
+  authSignedIn.hidden = !signedIn;
+  authUserEmail.textContent = currentUser?.email || "로그인됨";
+  document.querySelectorAll("[data-auth-required]").forEach((section) => {
+    section.hidden = !signedIn;
+  });
+  if (!signedIn) setSyncStatus("");
+  if (signedIn && plannerMap) {
+    window.setTimeout(() => plannerMap.invalidateSize(), 0);
+  }
+}
+
+function storePlannerState(state) {
+  const incomingEvents = Array.isArray(state?.events) ? state.events : [];
+  const incomingCategoryOrder = Array.isArray(state?.categoryOrder) ? state.categoryOrder : [];
+  const incomingHome = state?.homeLocation;
+
+  applyingCloudState = true;
+  events = incomingEvents.map((event) => normalizeEventTodos({
+    ...event,
+    id: event.id || crypto.randomUUID(),
+    category: normalizedCategory(event.category || "ETC")
+  }));
+  categoryOrder = incomingCategoryOrder.map(normalizedCategory);
+  homeLocation = incomingHome && Number.isFinite(Number(incomingHome.latitude)) && Number.isFinite(Number(incomingHome.longitude))
+    ? {
+        latitude: Number(incomingHome.latitude),
+        longitude: Number(incomingHome.longitude),
+        name: String(incomingHome.name || "집"),
+        address: String(incomingHome.address || "")
+      }
+    : null;
+  homeVisible = Boolean(state?.homeVisible && homeLocation);
+  selectedCategories = new Set(events.map((event) => event.category));
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
+  localStorage.setItem(CATEGORY_ORDER_KEY, JSON.stringify(categoryOrder));
+  if (homeLocation) {
+    localStorage.setItem(HOME_LOCATION_KEY, JSON.stringify(homeLocation));
+  } else {
+    localStorage.removeItem(HOME_LOCATION_KEY);
+  }
+  localStorage.setItem(HOME_VISIBLE_KEY, String(homeVisible));
+  applyingCloudState = false;
+  showIdleForm();
+  renderAll();
+}
+
+function mergedPlannerState(localState, cloudState) {
+  const mergedEvents = new Map();
+  (Array.isArray(localState?.events) ? localState.events : []).forEach((event) => mergedEvents.set(event.id, event));
+  (Array.isArray(cloudState?.events) ? cloudState.events : []).forEach((event) => mergedEvents.set(event.id, event));
+
+  const cloudCategories = Array.isArray(cloudState?.categoryOrder) ? cloudState.categoryOrder : [];
+  const localCategories = Array.isArray(localState?.categoryOrder) ? localState.categoryOrder : [];
+  return {
+    version: 6,
+    events: [...mergedEvents.values()],
+    categoryOrder: [...new Set([...cloudCategories, ...localCategories])],
+    homeLocation: cloudState?.homeLocation || localState?.homeLocation || null,
+    homeVisible: cloudState?.homeLocation
+      ? Boolean(cloudState.homeVisible)
+      : Boolean(localState?.homeVisible),
+    savedAt: new Date().toISOString()
+  };
+}
+
+function queueCloudSync() {
+  if (applyingCloudState || !currentUser || !supabaseClient) return;
+  cloudSyncQueued = true;
+  window.clearTimeout(cloudSyncTimer);
+  setSyncStatus("변경사항 저장 중…", "syncing");
+  cloudSyncTimer = window.setTimeout(flushCloudSync, 500);
+}
+
+async function pushCloudState() {
+  const state = plannerState();
+  if (cloudCalendarId) {
+    const { data, error } = await supabaseClient
+      .from("planner_calendars")
+      .update({ state, updated_at: state.savedAt })
+      .eq("id", cloudCalendarId)
+      .eq("owner_id", currentUser.id)
+      .select("id")
+      .maybeSingle();
+    if (error) throw error;
+    if (data?.id) {
+      cloudOwnerId = currentUser.id;
+      localStorage.setItem(CLOUD_OWNER_KEY, cloudOwnerId);
+      return data.id;
+    }
+    cloudCalendarId = "";
+    localStorage.removeItem(CLOUD_CALENDAR_KEY);
+  }
+
+  const { data, error } = await supabaseClient
+    .from("planner_calendars")
+    .insert({ owner_id: currentUser.id, name: "내 일정", state, updated_at: state.savedAt })
+    .select("id")
+    .single();
+  if (error) throw error;
+  cloudCalendarId = data.id;
+  localStorage.setItem(CLOUD_CALENDAR_KEY, cloudCalendarId);
+  cloudOwnerId = currentUser.id;
+  localStorage.setItem(CLOUD_OWNER_KEY, cloudOwnerId);
+  return cloudCalendarId;
+}
+
+async function flushCloudSync() {
+  if (!currentUser || !supabaseClient) return;
+  if (cloudSyncInFlight) return cloudSyncInFlight;
+
+  cloudSyncInFlight = (async () => {
+    try {
+      do {
+        cloudSyncQueued = false;
+        await pushCloudState();
+      } while (cloudSyncQueued);
+      setSyncStatus(`동기화됨 · ${new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(new Date())}`, "synced");
+    } catch (error) {
+      console.error("일정을 동기화하지 못했습니다.", error);
+      setSyncStatus("이 기기에 저장됨 · 동기화 실패", "error");
+    } finally {
+      cloudSyncInFlight = null;
+    }
+  })();
+  return cloudSyncInFlight;
+}
+
+async function syncFromCloud() {
+  if (!currentUser || !supabaseClient) return;
+  setSyncStatus("클라우드 일정 확인 중…", "syncing");
+  const { data, error } = await supabaseClient
+    .from("planner_calendars")
+    .select("id, state")
+    .eq("owner_id", currentUser.id)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+
+  if (!data) {
+    cloudCalendarId = "";
+    localStorage.removeItem(CLOUD_CALENDAR_KEY);
+    cloudSyncQueued = true;
+    await flushCloudSync();
+    return;
+  }
+
+  const alreadyLinked = cloudOwnerId === currentUser.id && cloudCalendarId === data.id;
+  cloudCalendarId = data.id;
+  localStorage.setItem(CLOUD_CALENDAR_KEY, cloudCalendarId);
+  cloudOwnerId = currentUser.id;
+  localStorage.setItem(CLOUD_OWNER_KEY, cloudOwnerId);
+
+  if (alreadyLinked) {
+    storePlannerState(data.state || {});
+    setSyncStatus("최신 일정으로 동기화됨", "synced");
+  } else {
+    const merged = mergedPlannerState(plannerState(), data.state || {});
+    storePlannerState(merged);
+    cloudSyncQueued = true;
+    await flushCloudSync();
+  }
+}
+
+async function handleSignedIn(user) {
+  const changedAccount = cloudOwnerId && cloudOwnerId !== user.id;
+  currentUser = user;
+  if (changedAccount) {
+    cloudCalendarId = "";
+    cloudOwnerId = "";
+    localStorage.removeItem(CLOUD_CALENDAR_KEY);
+    localStorage.removeItem(CLOUD_OWNER_KEY);
+  }
+  authMessage.textContent = "";
+  updateAuthView();
+  try {
+    await syncFromCloud();
+  } catch (error) {
+    console.error("클라우드 일정을 불러오지 못했습니다.", error);
+    setSyncStatus("이 기기의 일정 사용 중 · 연결 실패", "error");
+  }
+}
+
+async function sendLoginLink() {
+  const email = authEmailInput.value.trim();
+  if (!email || !authEmailInput.checkValidity()) {
+    authMessage.textContent = "올바른 이메일 주소를 입력해주세요.";
+    authEmailInput.focus();
+    return;
+  }
+
+  authLoginButton.disabled = true;
+  authMessage.textContent = "로그인 링크를 보내는 중…";
+  const redirectUrl = `${window.location.origin}${window.location.pathname}`;
+  const { error } = await supabaseClient.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: redirectUrl,
+      shouldCreateUser: true
+    }
+  });
+  authLoginButton.disabled = false;
+  authMessage.textContent = error
+    ? `로그인 링크를 보내지 못했어요: ${error.message}`
+    : "메일을 확인해주세요. 받은 링크는 로그인할 기기에서 열어주세요.";
+}
+
+async function initializeCloudSync() {
+  const config = window.SERIN_SUPABASE_CONFIG;
+  if (!window.supabase?.createClient || !config?.url || !config?.publishableKey) {
+    authMessage.textContent = "동기화 서비스를 불러오지 못했어요. 이 기기에는 계속 저장됩니다.";
+    return;
+  }
+
+  supabaseClient = window.supabase.createClient(config.url, config.publishableKey);
+  authLoginButton.addEventListener("click", sendLoginLink);
+  authEmailInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") sendLoginLink();
+  });
+  authLogoutButton.addEventListener("click", async () => {
+    await flushCloudSync();
+    await supabaseClient.auth.signOut();
+  });
+  syncNowButton.addEventListener("click", async () => {
+    syncNowButton.disabled = true;
+    try {
+      await syncFromCloud();
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("동기화 실패 · 다시 시도해주세요", "error");
+    } finally {
+      syncNowButton.disabled = false;
+    }
+  });
+
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    window.setTimeout(() => {
+      if (session?.user && currentUser?.id !== session.user.id) {
+        handleSignedIn(session.user);
+      } else if (event === "SIGNED_OUT") {
+        currentUser = null;
+        authMessage.textContent = "로그아웃됐어요. 일정은 이 기기에도 남아 있습니다.";
+        updateAuthView();
+      }
+    }, 0);
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && currentUser && ["idle", "view"].includes(formMode)) {
+      syncFromCloud().catch((syncError) => {
+        console.error(syncError);
+        setSyncStatus("자동 동기화 실패 · 다시 시도해주세요", "error");
+      });
+    }
+  });
+  window.addEventListener("online", () => {
+    if (!currentUser) return;
+    cloudSyncQueued = true;
+    flushCloudSync();
+  });
+
+  const { data: { session }, error } = await supabaseClient.auth.getSession();
+  if (error) {
+    console.error(error);
+    authMessage.textContent = "로그인 상태를 확인하지 못했어요.";
+  } else if (session?.user) {
+    await handleSignedIn(session.user);
+  } else {
+    updateAuthView();
+  }
 }
 
 function normalizedCategory(value) {
@@ -1979,3 +2294,4 @@ syncConditionalFields();
 applyFormMode("idle");
 initializePlannerMap();
 renderAll();
+initializeCloudSync();

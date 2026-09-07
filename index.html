@@ -26,11 +26,35 @@
         <p class="eyebrow">MY PLANNER</p>
         <h1>Schedule.</h1>
         <p class="planner-description">
-          일정은 이 브라우저에만 저장돼요.
+          로그인하면 일정이 내 기기 사이에서 안전하게 동기화돼요.
         </p>
+
+        <section class="sync-account-card" id="syncAccountCard" aria-label="일정 동기화 계정">
+          <div id="authSignedOut">
+            <strong>기기 간 동기화</strong>
+            <p>이메일로 받은 로그인 링크를 열면 이 기기의 일정이 연결돼요.</p>
+            <div class="auth-email-row">
+              <input id="authEmailInput" type="email" placeholder="이메일 주소" autocomplete="email" aria-label="로그인 이메일">
+              <button id="authLoginButton" type="button">로그인 링크 받기</button>
+            </div>
+          </div>
+          <div id="authSignedIn" hidden>
+            <div class="sync-account-heading">
+              <div>
+                <strong id="authUserEmail"></strong>
+                <span id="syncStatus" aria-live="polite">연결 중…</span>
+              </div>
+              <div class="sync-account-actions">
+                <button id="syncNowButton" type="button">지금 동기화</button>
+                <button id="authLogoutButton" type="button">로그아웃</button>
+              </div>
+            </div>
+          </div>
+          <p class="auth-message" id="authMessage" aria-live="polite"></p>
+        </section>
       </div>
 
-      <section class="planner-overview" aria-label="일정 달력과 지도">
+      <section class="planner-overview" aria-label="일정 달력과 지도" data-auth-required hidden>
         <div class="mini-calendar">
           <div class="mini-calendar-header">
             <button id="calendarPrevButton" type="button" aria-label="이전 달">‹</button>
@@ -87,7 +111,7 @@
       </section>
     </section>
 
-    <section class="planner-layout">
+    <section class="planner-layout" data-auth-required hidden>
       <aside class="form-card">
         <div class="section-heading">
           <div>
@@ -254,7 +278,7 @@
       </section>
     </section>
 
-    <section class="backup-actions planner-data-actions" aria-label="일정 데이터 관리">
+    <section class="backup-actions planner-data-actions" aria-label="일정 데이터 관리" data-auth-required hidden>
       <button class="quiet-button" id="exportButton" type="button">백업</button>
       <label class="quiet-button file-button">
         불러오기
@@ -265,6 +289,8 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./supabase-config.js"></script>
   <script src="./schedule.js"></script>
 </body>
 </html>
