@@ -1804,10 +1804,11 @@ function renderTravelRouteSteps(container, plan = {}) {
 
     if (step.type === "walk") {
       body.append(element("strong", "travel-step-heading", "도보"));
-      const details = [
+      const movement = [
         Number.isFinite(step.durationMinutes) ? `${step.durationMinutes}분` : "",
         step.distance
       ].filter(Boolean).join(" · ");
+      const details = [movement, step.exit ? `(${step.exit})` : ""].filter(Boolean).join(" ");
       if (details) body.append(element("span", "travel-step-detail", details));
     } else {
       const heading = element("div", "travel-step-heading");
@@ -1865,7 +1866,8 @@ function openTravelPlanner(eventId) {
 
   travelEventId = event.id;
   travelDialogTitle.textContent = `${event.title} 출발 시간`;
-  travelDestinationLabel.textContent = [destination.name, destination.detail].filter(Boolean).join(" · ") || event.title;
+  const destinationLabel = [destination.name, destination.detail].filter(Boolean).join(" · ") || event.title;
+  travelDestinationLabel.textContent = [event.startTime, destinationLabel].filter(Boolean).join(" · ");
   travelOriginSelect.replaceChildren();
   origins.forEach((origin) => {
     const option = element("option", "", origin.label);
@@ -2019,6 +2021,7 @@ function eventCard(event, { showDate = false, showCategory = true, stackDateTime
     "details",
     `compact-event${stackDateTime ? " is-stacked" : ""}${dimmed ? " is-dimmed" : ""}${elapsed ? " is-elapsed" : ""}`
   );
+  card.dataset.eventId = event.id;
   card.open = selectedEventId === event.id;
   const summary = element("summary", "compact-event-summary");
   const primary = element("span", "compact-event-primary");
@@ -2161,12 +2164,26 @@ function eventCard(event, { showDate = false, showCategory = true, stackDateTime
   return card;
 }
 
+function syncTimelineLinkedHighlights() {
+  timelineView.querySelectorAll(".compact-event.is-linked-highlight").forEach((card) => {
+    card.classList.remove("is-linked-highlight");
+  });
+  timelineView.querySelectorAll(".submission-deadline-event[open]").forEach((submissionCard) => {
+    const linkedEventId = submissionCard.dataset.linkedEventId;
+    if (!linkedEventId) return;
+    [...timelineView.querySelectorAll(".compact-event[data-event-id]")]
+      .find((eventCardElement) => eventCardElement.dataset.eventId === linkedEventId)
+      ?.classList.add("is-linked-highlight");
+  });
+}
+
 function submissionTimelineCard(event, todo, { dimmed = false } = {}) {
   const elapsed = isTodoDeadlineElapsed(todo);
   const card = element(
     "details",
     `compact-event submission-deadline-event${dimmed ? " is-dimmed" : ""}${elapsed ? " is-elapsed" : ""}`
   );
+  card.dataset.linkedEventId = event.id;
   const summary = element("summary", "compact-event-summary");
   const primary = element("span", "compact-event-primary submission-event-primary");
   const time = element(
@@ -2199,7 +2216,10 @@ function submissionTimelineCard(event, todo, { dimmed = false } = {}) {
     deadlineValue
   );
   const linkedEventInfo = element("div", "event-info-item");
-  linkedEventInfo.append(element("span", "", "연결 일정"), element("strong", "", event.title));
+  linkedEventInfo.append(
+    element("span", "", "연결 일정"),
+    element("strong", "linked-event-title", event.title)
+  );
   info.append(deadlineInfo, linkedEventInfo);
   expanded.append(info);
 
@@ -2215,12 +2235,14 @@ function submissionTimelineCard(event, todo, { dimmed = false } = {}) {
   card.append(expanded);
 
   card.addEventListener("toggle", () => {
-    if (!card.open) return;
-    selectedEventId = event.id;
-    card.closest(".view-panel")?.querySelectorAll(".compact-event[open]").forEach((openCard) => {
-      if (openCard !== card) openCard.open = false;
-    });
-    showEventInForm(event.id, "view");
+    if (card.open) {
+      selectedEventId = event.id;
+      card.closest(".view-panel")?.querySelectorAll(".compact-event[open]").forEach((openCard) => {
+        if (openCard !== card) openCard.open = false;
+      });
+      showEventInForm(event.id, "view");
+    }
+    window.requestAnimationFrame(syncTimelineLinkedHighlights);
   });
   return card;
 }

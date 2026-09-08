@@ -2299,6 +2299,21 @@ button,
   text-overflow: ellipsis;
 }
 
+.compact-event.is-linked-highlight .compact-event-title {
+  margin: -2px -6px;
+  padding: 2px 6px;
+  background: #fff1a8;
+  color: #1d1d1f;
+}
+
+.linked-event-title {
+  width: fit-content;
+  margin: -2px -6px;
+  padding: 2px 6px;
+  background: #fff1a8;
+  color: #1d1d1f;
+}
+
 .category-pill,
 .submission-pill,
 .status-pill {
