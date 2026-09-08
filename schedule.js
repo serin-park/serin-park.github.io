@@ -1151,8 +1151,27 @@ function formatDate(dateString, options = {}) {
   return new Intl.DateTimeFormat("ko-KR", options).format(date);
 }
 
-function compactDate(dateString) {
-  return formatDate(dateString, { month: "numeric", day: "numeric", weekday: "short" });
+function compactDate(dateString, { includeWeekday = true } = {}) {
+  if (!dateString) return "기한 없음";
+  const [year, month, day] = dateString.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  if ([year, month, day].some((value) => !Number.isFinite(value)) || Number.isNaN(date.getTime())) {
+    return dateString;
+  }
+  const dateText = `${month}. ${day}.`;
+  if (!includeWeekday) return dateText;
+  const weekday = ["일", "월", "화", "수", "목", "금", "토"][date.getDay()];
+  return `${dateText} (${weekday})`;
+}
+
+function viewDate(dateString, { includeWeekday = true } = {}) {
+  const date = element(
+    "time",
+    `view-date${dateString === dateInputValue(new Date()) ? " is-today" : ""}`,
+    compactDate(dateString, { includeWeekday })
+  );
+  date.dateTime = dateString;
+  return date;
 }
 
 function dateInputValue(date) {
@@ -1436,16 +1455,20 @@ function nextUpcomingTravelEvent() {
       event.travelPlan
       && departure
       && departure >= now
-      && dateMatchesActiveFilter(event.date)
+      && (hasExplicitDateFilter
+        ? dateMatchesActiveFilter(event.date)
+        : event.date === selectedMapDate)
     ))
     .sort((a, b) => a.departure - b.departure)[0] || null;
 }
 
 function renderUpcomingTravel() {
   const upcoming = nextUpcomingTravelEvent();
+  const today = dateInputValue(new Date());
   const layoutChanged = plannerMapContent.classList.contains("has-upcoming-travel") !== Boolean(upcoming);
   plannerMapContent.classList.toggle("has-upcoming-travel", Boolean(upcoming));
   plannerMapPanel.classList.toggle("has-upcoming-travel", Boolean(upcoming));
+  upcomingTravelCard.classList.toggle("is-today", Boolean(upcoming && upcoming.event.date === today));
   upcomingTravelCard.hidden = !upcoming;
   if (layoutChanged && plannerMap) {
     window.setTimeout(() => plannerMap.invalidateSize(), 0);
@@ -1460,7 +1483,7 @@ function renderUpcomingTravel() {
   const destination = eventStartMapPoint(event);
   const departureClock = `${String(departure.getHours()).padStart(2, "0")}:${String(departure.getMinutes()).padStart(2, "0")}`;
   upcomingTravelTitle.textContent = event.title;
-  upcomingTravelDate.textContent = `${compactDate(event.date)} · ${departureClock} 출발`;
+  upcomingTravelDate.textContent = compactDate(event.date);
   upcomingTravelRoute.replaceChildren(
     element("strong", "", plan.originName || "출발지"),
     document.createTextNode(` → ${destination?.name || event.location || event.title}`)
@@ -1483,8 +1506,8 @@ function renderPlannerMap() {
   const isMapRange = mapStartDate !== mapEndDate;
   mapDateKicker.textContent = isMapRange ? "SELECTED RANGE" : "SELECTED DATE";
   mapDateLabel.textContent = isMapRange
-    ? `${formatDate(mapStartDate, { year: "numeric", month: "numeric", day: "numeric" })} – ${formatDate(mapEndDate, { year: "numeric", month: "numeric", day: "numeric" })}`
-    : formatDate(mapStartDate, { month: "long", day: "numeric", weekday: "long" });
+    ? `${compactDate(mapStartDate)} – ${compactDate(mapEndDate)}`
+    : compactDate(mapStartDate);
   const offlineEvents = sortEvents(events.filter((event) => (
     event.date >= mapStartDate &&
     event.date <= mapEndDate &&
@@ -1583,15 +1606,7 @@ function formatDeadline(value) {
   if (!value) return "기한 미정";
   const [datePart, timePart = ""] = value.split("T");
   if (!timePart) return compactDate(datePart);
-  const date = new Date(`${datePart}T${timePart}`);
-  return new Intl.DateTimeFormat("ko-KR", {
-    month: "numeric",
-    day: "numeric",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).format(date);
+  return `${compactDate(datePart)} · ${timePart.slice(0, 5)}`;
 }
 
 function splitSubmissionDeadline(value) {
@@ -2012,12 +2027,18 @@ function eventCard(event, { showDate = false, showCategory = true, stackDateTime
     : "";
   const displayedTitle = routeNames ? `${event.title} · ${routeNames}` : event.title;
   if (stackDateTime) {
+    const subline = element("span", "compact-event-subline");
+    subline.append(viewDate(event.date), document.createTextNode(` · ${event.startTime || "All day"}`));
     primary.append(
       element("span", "compact-event-title", displayedTitle),
-      element("span", "compact-event-subline", `${compactDate(event.date)} · ${event.startTime || "All day"}`)
+      subline
     );
   } else {
-    if (showDate) primary.append(element("span", "compact-event-date", compactDate(event.date)));
+    if (showDate) {
+      const date = viewDate(event.date);
+      date.classList.add("compact-event-date");
+      primary.append(date);
+    }
     primary.append(
       element("span", `compact-event-time${event.startTime ? "" : " is-all-day"}`, event.startTime || "All day"),
       element("span", "compact-event-divider", "—"),
@@ -2035,9 +2056,11 @@ function eventCard(event, { showDate = false, showCategory = true, stackDateTime
   const expanded = element("div", "event-expanded");
   const info = element("div", "event-expanded-info");
   const dateInfo = element("div", "event-info-item");
+  const dateValue = element("strong");
+  dateValue.append(viewDate(event.date), document.createTextNode(` · ${formatTime(event)}`));
   dateInfo.append(
     element("span", "", isTravelEvent(event) ? "이동 시간" : "일시"),
-    element("strong", "", `${compactDate(event.date)} · ${formatTime(event)}`)
+    dateValue
   );
   info.append(dateInfo);
 
@@ -2169,9 +2192,11 @@ function submissionTimelineCard(event, todo, { dimmed = false } = {}) {
   const expanded = element("div", "event-expanded");
   const info = element("div", "event-expanded-info");
   const deadlineInfo = element("div", "event-info-item");
+  const deadlineValue = element("strong");
+  deadlineValue.append(viewDate(todo.dueDate), document.createTextNode(` · ${todo.dueTime || "시간 미정"}`));
   deadlineInfo.append(
     element("span", "", "제출 기한"),
-    element("strong", "", `${compactDate(todo.dueDate)} · ${todo.dueTime || "시간 미정"}`)
+    deadlineValue
   );
   const linkedEventInfo = element("div", "event-info-item");
   linkedEventInfo.append(element("span", "", "연결 일정"), element("strong", "", event.title));
@@ -2237,11 +2262,11 @@ function renderTimeline() {
 
   Object.entries(byDate).forEach(([date, dateEntries]) => {
     const group = element("section", "date-group");
-    const label = element("div", "date-label");
+    const label = element("div", `date-label${date === dateInputValue(new Date()) ? " is-today" : ""}`);
     const dateObject = new Date(`${date}T00:00:00`);
     label.append(
-      element("strong", "", `${dateObject.getMonth() + 1}/${dateObject.getDate()}`),
-      element("span", "", formatDate(date, { weekday: "long" }))
+      element("strong", "", compactDate(date, { includeWeekday: false })),
+      element("span", "", `(${["일", "월", "화", "수", "목", "금", "토"][dateObject.getDay()]})`)
     );
 
     const list = element("div", "date-events");
@@ -2496,9 +2521,11 @@ function reservationTaskItem(event) {
   checkbox.addEventListener("change", () => updateReservationTask(event.id, checkbox.checked));
 
   const copy = element("span", "task-copy");
+  const scheduleLine = element("span");
+  scheduleLine.append(viewDate(event.date), document.createTextNode(" · 예약"));
   copy.append(
     element("strong", "", event.title),
-    element("span", "", `${compactDate(event.date)} · 예약`)
+    scheduleLine
   );
   label.append(checkbox, copy);
   item.append(label, element("span", "category-pill", event.category));
@@ -2518,9 +2545,19 @@ function todoTaskItem(event, todo) {
   const deadline = todo.dueDate
     ? formatDeadline(`${todo.dueDate}${todo.dueTime ? `T${todo.dueTime}` : ""}`)
     : "기한 없음";
+  const todoScheduleLine = element("span");
+  todoScheduleLine.append(document.createTextNode(`${event.title} · `));
+  if (todo.dueDate) {
+    todoScheduleLine.append(
+      viewDate(todo.dueDate),
+      document.createTextNode(todo.dueTime ? ` · ${todo.dueTime}` : "")
+    );
+  } else {
+    todoScheduleLine.append(document.createTextNode(deadline));
+  }
   copy.append(
     element("strong", "", todo.title),
-    element("span", "", `${event.title} · ${deadline}`)
+    todoScheduleLine
   );
   label.append(checkbox, copy);
 

@@ -709,9 +709,14 @@
 
 .planner-upcoming-travel-heading time {
   flex: 0 0 auto;
-  color: #86868b;
-  font-size: 8px;
+  color: #1d1d1f;
+  font-size: 13px;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
+}
+
+.planner-upcoming-travel.is-today .planner-upcoming-travel-heading time {
+  color: #d70015;
 }
 
 .planner-upcoming-travel-route {
@@ -734,6 +739,16 @@
 .planner-upcoming-travel-steps .travel-route-boundary {
   padding: 7px 9px;
   font-size: 9px;
+}
+
+.planner-upcoming-travel-steps .travel-route-boundary strong,
+.planner-upcoming-travel-steps .travel-route-boundary span {
+  color: #1d1d1f;
+}
+
+.planner-upcoming-travel.is-today .planner-upcoming-travel-steps .travel-route-boundary strong,
+.planner-upcoming-travel.is-today .planner-upcoming-travel-steps .travel-route-boundary span {
+  color: #d70015;
 }
 
 .planner-upcoming-travel-steps .travel-route-step {
@@ -2101,6 +2116,18 @@ button,
 .date-label span {
   color: #86868b;
   font-size: 12px;
+}
+
+.date-label.is-today strong,
+.date-label.is-today span,
+.view-date.is-today {
+  color: #d70015;
+}
+
+.view-date {
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
 }
 
 .date-events,
