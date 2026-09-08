@@ -361,7 +361,81 @@ function demoEvents() {
       category: "SOCIAL",
       reservationStatus: "booked",
       notes: "예약자 이름 확인하기",
-      todos: []
+      todos: [],
+      travelPlan: {
+        mode: "traffic",
+        originKey: "home",
+        originName: "한국과학기술원 도곡캠퍼스",
+        targetArrival: "12:00",
+        durationMinutes: 73,
+        naverDepartureTime: "10:45",
+        naverArrivalTime: "11:58",
+        manual: false,
+        capturedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        routeSteps: [
+          {
+            type: "walk",
+            durationMinutes: 7,
+            distance: ""
+          },
+          {
+            type: "bus",
+            line: "402",
+            alternateLines: ["402"],
+            direction: "무교동·개포한신아파트 방면",
+            boardStation: "매봉역",
+            alightStation: "도곡역3번출구",
+            stopCount: 3,
+            stopUnit: "정류장",
+            durationMinutes: 6
+          },
+          {
+            type: "walk",
+            durationMinutes: 4,
+            distance: ""
+          },
+          {
+            type: "subway",
+            line: "수인분당선",
+            direction: "왕십리행",
+            nextStation: "한티역",
+            boardTime: "11:07",
+            alightTime: "11:21",
+            boardStation: "도곡역",
+            alightStation: "왕십리역",
+            stopCount: 7,
+            stopUnit: "역",
+            durationMinutes: 14,
+            fastTransfer: "4-4",
+            boardingPosition: "2번"
+          },
+          {
+            type: "walk",
+            durationMinutes: 2,
+            distance: ""
+          },
+          {
+            type: "subway",
+            line: "2호선",
+            direction: "외선순환행",
+            nextStation: "상왕십리역",
+            boardTime: "11:26",
+            alightTime: "11:47",
+            boardStation: "왕십리역",
+            alightStation: "홍대입구역",
+            stopCount: 12,
+            stopUnit: "역",
+            durationMinutes: 21,
+            fastTransfer: "6-4, 8-2"
+          },
+          {
+            type: "walk",
+            durationMinutes: 10,
+            distance: ""
+          }
+        ]
+      }
     }),
     normalizeEventTodos({
       id: "demo-station-pickup",
@@ -418,15 +492,50 @@ function demoEvents() {
       startTime: "19:00",
       endTime: "20:00",
       locationType: "offline",
-      location: "신촌",
+      location: "서초구청",
       locationDetail: "운동 스튜디오",
-      locationAddress: "서울특별시 서대문구 신촌동",
-      latitude: 37.5563,
-      longitude: 126.9384,
+      locationAddress: "서울특별시 서초구 남부순환로 2584",
+      latitude: 37.483625,
+      longitude: 127.032683,
       category: "HEALTH",
       reservationStatus: "booked",
       notes: "운동복과 물 챙기기",
-      todos: []
+      todos: [],
+      travelPlan: {
+        mode: "traffic",
+        originKey: "home",
+        originName: "한국과학기술원 도곡캠퍼스",
+        targetArrival: "19:00",
+        durationMinutes: 23,
+        naverDepartureTime: "18:25",
+        naverArrivalTime: "18:48",
+        manual: false,
+        capturedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        routeSteps: [
+          {
+            type: "walk",
+            durationMinutes: 4,
+            distance: ""
+          },
+          {
+            type: "bus",
+            line: "서초21",
+            alternateLines: ["서초21"],
+            direction: "양재역4번출구 방면",
+            boardStation: "원불교",
+            alightStation: "서초구청맞은편",
+            stopCount: 2,
+            stopUnit: "정류장",
+            durationMinutes: 7
+          },
+          {
+            type: "walk",
+            durationMinutes: 1,
+            distance: ""
+          }
+        ]
+      }
     }),
     normalizeEventTodos({
       id: "demo-online-class",
@@ -484,7 +593,61 @@ function demoEvents() {
       category: "STUDY",
       reservationStatus: "booked",
       notes: "데모 화면을 자유롭게 둘러보세요.",
-      todos: []
+      todos: [],
+      travelPlan: {
+        mode: "traffic",
+        originKey: "home",
+        originName: "한국과학기술원 도곡캠퍼스",
+        targetArrival: "13:00",
+        durationMinutes: 51,
+        naverDepartureTime: "12:00",
+        naverArrivalTime: "12:51",
+        manual: false,
+        capturedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        routeSteps: [
+          {
+            type: "walk",
+            durationMinutes: 4,
+            distance: ""
+          },
+          {
+            type: "bus",
+            line: "463",
+            alternateLines: ["463"],
+            direction: "도곡한신아파트 방면",
+            boardStation: "원불교앞",
+            alightStation: "역삼역7번출구·GS타워",
+            stopCount: 5,
+            stopUnit: "정류장",
+            durationMinutes: 11
+          },
+          {
+            type: "walk",
+            durationMinutes: 4,
+            distance: ""
+          },
+          {
+            type: "subway",
+            line: "2호선",
+            direction: "외선순환행",
+            nextStation: "선릉역",
+            boardTime: "12:23",
+            alightTime: "12:43",
+            boardStation: "역삼역",
+            alightStation: "성수역",
+            stopCount: 10,
+            stopUnit: "역",
+            durationMinutes: 20,
+            fastTransfer: "10-4"
+          },
+          {
+            type: "walk",
+            durationMinutes: 7,
+            distance: ""
+          }
+        ]
+      }
     })
   ];
 }
@@ -496,10 +659,10 @@ function activateDemoMode() {
   categoryOrder = ["WORK", "SOCIAL", "ERRAND", "LIFE", "HEALTH", "STUDY", "TRAVEL"];
   notes = [];
   homeLocation = {
-    latitude: 37.555184,
-    longitude: 126.93691,
-    name: "신촌역",
-    address: "서울특별시 마포구 노고산동 31-11"
+    latitude: 37.483542,
+    longitude: 127.044011,
+    name: "한국과학기술원 도곡캠퍼스",
+    address: "서울특별시 강남구 논현로28길 25"
   };
   homeVisible = true;
   selectedCategories = new Set(categoryOrder);
@@ -3386,6 +3549,7 @@ travelSaveButton.addEventListener("click", () => {
 });
 
 travelClearButton.addEventListener("click", () => {
+  if (!requireSignIn("로그인하면 이동 계획을 지울 수 있어요.")) return;
   const event = events.find((item) => item.id === travelEventId);
   if (!event?.travelPlan || !window.confirm("이 일정에 저장된 이동 계획을 지울까요?")) return;
   events = events.map((item) => item.id === event.id ? { ...item, travelPlan: null } : item);
@@ -3397,6 +3561,10 @@ travelClearButton.addEventListener("click", () => {
 window.addEventListener("message", (messageEvent) => {
   if (messageEvent.source !== window || messageEvent.data?.source !== "serin-route-extension") return;
   if (messageEvent.data.type !== "ROUTE_RESULT") return;
+  if (!currentUser) {
+    requireSignIn("로그인하면 네이버지도 이동 계획을 가져올 수 있어요.");
+    return;
+  }
 
   const payload = messageEvent.data.payload || {};
   const event = events.find((item) => item.id === payload.eventId);
