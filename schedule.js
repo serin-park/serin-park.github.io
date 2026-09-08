@@ -24,6 +24,8 @@ const todoInputList = document.querySelector("#todoInputList");
 const todoEmptyNote = document.querySelector("#todoEmptyNote");
 const offlineLocationField = document.querySelector("#offlineLocationField");
 const onlineLinkField = document.querySelector("#onlineLinkField");
+const regularEventFields = document.querySelector("#regularEventFields");
+const travelEventFields = document.querySelector("#travelEventFields");
 const categoryInput = document.querySelector("#category");
 const categoryMenuButton = document.querySelector("#categoryMenuButton");
 const categoryMenu = document.querySelector("#categoryMenu");
@@ -41,6 +43,21 @@ const noteTitleInput = document.querySelector("#noteTitle");
 const noteBodyInput = document.querySelector("#noteBody");
 const noteSaveStatus = document.querySelector("#noteSaveStatus");
 const deleteNoteButton = document.querySelector("#deleteNoteButton");
+const travelDialog = document.querySelector("#travelDialog");
+const travelForm = document.querySelector("#travelForm");
+const travelDialogTitle = document.querySelector("#travelDialogTitle");
+const travelCloseButton = document.querySelector("#travelCloseButton");
+const travelOriginSelect = document.querySelector("#travelOriginSelect");
+const travelDestinationLabel = document.querySelector("#travelDestinationLabel");
+const travelDuration = document.querySelector("#travelDuration");
+const travelRecommendedDeparture = document.querySelector("#travelRecommendedDeparture");
+const travelHelper = document.querySelector("#travelHelper");
+const travelStepsPreview = document.querySelector("#travelStepsPreview");
+const travelNaverLink = document.querySelector("#travelNaverLink");
+const travelManualToggle = document.querySelector("#travelManualToggle");
+const travelManualPanel = document.querySelector("#travelManualPanel");
+const travelClearButton = document.querySelector("#travelClearButton");
+const travelSaveButton = document.querySelector("#travelSaveButton");
 const calendarPrevButton = document.querySelector("#calendarPrevButton");
 const calendarNextButton = document.querySelector("#calendarNextButton");
 const calendarMonthLabel = document.querySelector("#calendarMonthLabel");
@@ -54,7 +71,14 @@ const miniCalendarGrid = document.querySelector("#miniCalendarGrid");
 const mapDateKicker = document.querySelector("#mapDateKicker");
 const mapDateLabel = document.querySelector("#mapDateLabel");
 const mapEventCount = document.querySelector("#mapEventCount");
+const plannerMapPanel = document.querySelector(".planner-map-panel");
+const plannerMapContent = document.querySelector("#plannerMapContent");
 const plannerMapEmpty = document.querySelector("#plannerMapEmpty");
+const upcomingTravelCard = document.querySelector("#upcomingTravelCard");
+const upcomingTravelTitle = document.querySelector("#upcomingTravelTitle");
+const upcomingTravelDate = document.querySelector("#upcomingTravelDate");
+const upcomingTravelRoute = document.querySelector("#upcomingTravelRoute");
+const upcomingTravelSteps = document.querySelector("#upcomingTravelSteps");
 const homeMapToggle = document.querySelector("#homeMapToggle");
 const homeLocationButton = document.querySelector("#homeLocationButton");
 const homeLocationEditor = document.querySelector("#homeLocationEditor");
@@ -69,6 +93,16 @@ const locationDetailInput = document.querySelector("#locationDetail");
 const locationSearchButton = document.querySelector("#locationSearchButton");
 const locationSearchStatus = document.querySelector("#locationSearchStatus");
 const locationSearchResults = document.querySelector("#locationSearchResults");
+const departureLocationInput = document.querySelector("#departureLocation");
+const departureLocationDetailInput = document.querySelector("#departureLocationDetail");
+const departureLocationSearchButton = document.querySelector("#departureLocationSearchButton");
+const departureLocationSearchStatus = document.querySelector("#departureLocationSearchStatus");
+const departureLocationSearchResults = document.querySelector("#departureLocationSearchResults");
+const destinationLocationInput = document.querySelector("#destinationLocation");
+const destinationLocationDetailInput = document.querySelector("#destinationLocationDetail");
+const destinationLocationSearchButton = document.querySelector("#destinationLocationSearchButton");
+const destinationLocationSearchStatus = document.querySelector("#destinationLocationSearchStatus");
+const destinationLocationSearchResults = document.querySelector("#destinationLocationSearchResults");
 const authSignedOut = document.querySelector("#authSignedOut");
 const authSignedIn = document.querySelector("#authSignedIn");
 const authEmailInput = document.querySelector("#authEmailInput");
@@ -88,6 +122,8 @@ let draggedCategoryItem = null;
 let draggedCategoryContainer = null;
 let selectedEventId = null;
 let selectedNoteId = null;
+let travelEventId = null;
+let travelManualMode = false;
 let formMode = "idle";
 let timelineStartDate = dateInputValue(new Date());
 let timelineEndDate = "";
@@ -98,9 +134,12 @@ let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1
 let homeLocation = loadHomeLocation();
 let homeVisible = loadHomeVisibility() && Boolean(homeLocation);
 let selectedLocation = null;
+let selectedDepartureLocation = null;
+let selectedDestinationLocation = null;
 let plannerMap = null;
 let plannerMapMarkers = null;
 let locationSearchController = null;
+let locationSearchKind = null;
 let homeSearchController = null;
 let lastLocationSearchAt = 0;
 let supabaseClient = null;
@@ -127,6 +166,47 @@ function saveEvents() {
   if (demoMode) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
   queueCloudSync();
+}
+
+function removeStoredTravelSummaryImages() {
+  let changed = false;
+  events = events.map((event) => {
+    if (!event.travelPlan?.summaryImage) return event;
+    changed = true;
+    const { summaryImage, ...travelPlan } = event.travelPlan;
+    return { ...event, travelPlan };
+  });
+  if (changed) saveEvents();
+}
+
+function normalizeTravelRouteSteps(rawSteps) {
+  if (!Array.isArray(rawSteps)) return [];
+  return rawSteps.slice(0, 24).map((raw) => {
+    const type = ["walk", "subway", "bus"].includes(raw?.type) ? raw.type : "walk";
+    const duration = Number(raw?.durationMinutes);
+    const stopCount = Number(raw?.stopCount);
+    return {
+      type,
+      line: String(raw?.line || "").slice(0, 80),
+      alternateLines: Array.isArray(raw?.alternateLines)
+        ? [...new Set(raw.alternateLines.map((line) => String(line || "").slice(0, 40)).filter(Boolean))].slice(0, 8)
+        : [],
+      boardStation: String(raw?.boardStation || "").slice(0, 120),
+      boardTime: normalizeTime(raw?.boardTime || "") || "",
+      direction: String(raw?.direction || "").slice(0, 120),
+      nextStation: String(raw?.nextStation || "").slice(0, 120),
+      stopCount: Number.isFinite(stopCount) && stopCount >= 0 ? stopCount : null,
+      stopUnit: raw?.stopUnit === "정류장" ? "정류장" : "역",
+      durationMinutes: Number.isFinite(duration) && duration >= 0 ? duration : null,
+      alightStation: String(raw?.alightStation || "").slice(0, 120),
+      alightTime: normalizeTime(raw?.alightTime || "") || "",
+      fastTransfer: String(raw?.fastTransfer || "").slice(0, 80),
+      boardingPosition: String(raw?.boardingPosition || "").slice(0, 80),
+      exitDoor: String(raw?.exitDoor || "").slice(0, 80),
+      exit: String(raw?.exit || "").slice(0, 40),
+      distance: String(raw?.distance || "").slice(0, 40)
+    };
+  }).filter((step) => step.type === "walk" || step.boardStation || step.line);
 }
 
 function normalizeNote(note = {}) {
@@ -205,7 +285,7 @@ function saveHomeSettings() {
 
 function plannerState() {
   return {
-    version: 7,
+    version: 8,
     events,
     categoryOrder,
     notes,
@@ -534,7 +614,7 @@ function mergedPlannerState(localState, cloudState) {
     if (!existing || String(note.updatedAt) >= String(existing.updatedAt)) mergedNotes.set(note.id, note);
   });
   return {
-    version: 7,
+    version: 8,
     events: [...mergedEvents.values()],
     categoryOrder: [...new Set([...cloudCategories, ...localCategories])],
     notes: [...mergedNotes.values()],
@@ -732,14 +812,6 @@ async function initializeCloudSync() {
     }, 0);
   });
 
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && currentUser && ["idle", "view"].includes(formMode)) {
-      syncFromCloud().catch((syncError) => {
-        console.error(syncError);
-        setSyncStatus("자동 동기화 실패 · 다시 시도해주세요", "error");
-      });
-    }
-  });
   window.addEventListener("online", () => {
     if (!currentUser) return;
     cloudSyncQueued = true;
@@ -788,7 +860,12 @@ function normalizeUrl(value) {
   }
 }
 
+function isTravelEvent(event) {
+  return event?.eventKind === "travel";
+}
+
 function inferredLocationType(event) {
+  if (isTravelEvent(event)) return "offline";
   if (event.locationType === "online" || event.locationType === "offline") {
     return event.locationType;
   }
@@ -827,8 +904,19 @@ function normalizeEventTodos(event) {
 
   return {
     ...event,
+    eventKind: isTravelEvent(event) ? "travel" : "regular",
     location: compactLocation,
     locationDetail: String(event.locationDetail || ""),
+    departureLocation: String(event.departureLocation || ""),
+    departureLocationDetail: String(event.departureLocationDetail || ""),
+    departureLocationAddress: String(event.departureLocationAddress || ""),
+    departureLatitude: event.departureLatitude ?? null,
+    departureLongitude: event.departureLongitude ?? null,
+    destinationLocation: String(event.destinationLocation || ""),
+    destinationLocationDetail: String(event.destinationLocationDetail || ""),
+    destinationLocationAddress: String(event.destinationLocationAddress || ""),
+    destinationLatitude: event.destinationLatitude ?? null,
+    destinationLongitude: event.destinationLongitude ?? null,
     todos: todos.map((todo) => ({
       id: todo.id || crypto.randomUUID(),
       title: String(todo.title || ""),
@@ -845,6 +933,17 @@ function currentCategories() {
 }
 
 function eventLocationLabel(event) {
+  if (isTravelEvent(event)) {
+    const departure = [event.departureLocation, event.departureLocationDetail]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .join(" · ");
+    const destination = [event.destinationLocation, event.destinationLocationDetail]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .join(" · ");
+    return [departure, destination].filter(Boolean).join(" → ");
+  }
   return [event.location, event.locationDetail]
     .map((part) => String(part || "").trim())
     .filter(Boolean)
@@ -994,10 +1093,59 @@ function selectCalendarFilterDate(value, date) {
   renderAll();
 }
 
+function mapPoint(name, detail, latitude, longitude, role = "location") {
+  if (latitude === null || latitude === undefined || latitude === "") return null;
+  if (longitude === null || longitude === undefined || longitude === "") return null;
+  if (!Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) return null;
+  return {
+    name: String(name || "장소"),
+    detail: String(detail || ""),
+    latitude: Number(latitude),
+    longitude: Number(longitude),
+    role
+  };
+}
+
+function eventStartMapPoint(event) {
+  if (!event) return null;
+  if (isTravelEvent(event)) {
+    return mapPoint(
+      event.departureLocation,
+      event.departureLocationDetail,
+      event.departureLatitude,
+      event.departureLongitude,
+      "departure"
+    );
+  }
+  if (inferredLocationType(event) !== "offline") return null;
+  return mapPoint(event.location, event.locationDetail, event.latitude, event.longitude);
+}
+
+function eventEndMapPoint(event) {
+  if (!event) return null;
+  if (isTravelEvent(event)) {
+    return mapPoint(
+      event.destinationLocation,
+      event.destinationLocationDetail,
+      event.destinationLatitude,
+      event.destinationLongitude,
+      "destination"
+    );
+  }
+  return eventStartMapPoint(event);
+}
+
+function eventMapPoints(event) {
+  const start = eventStartMapPoint(event);
+  const end = eventEndMapPoint(event);
+  if (!start) return end ? [end] : [];
+  if (!end) return [start];
+  if (start.latitude === end.latitude && start.longitude === end.longitude) return [start];
+  return [start, end];
+}
+
 function hasMapCoordinates(event) {
-  if (event.latitude === null || event.latitude === undefined || event.latitude === "") return false;
-  if (event.longitude === null || event.longitude === undefined || event.longitude === "") return false;
-  return Number.isFinite(Number(event.latitude)) && Number.isFinite(Number(event.longitude));
+  return Boolean(eventEndMapPoint(event));
 }
 
 function initializePlannerMap() {
@@ -1069,32 +1217,101 @@ function renderMiniCalendar() {
   }
 }
 
-function mapPopupForEvent(event, { showDate = false } = {}) {
+function mapPopupForEvent(event, point, { showDate = false } = {}) {
   const popup = element("div", "map-popup-content");
   const time = event.startTime || "All day";
+  const pointRole = point.role === "departure" ? "출발" : point.role === "destination" ? "도착" : "";
   const popupHeading = [
     showDate ? compactDate(event.date) : "",
     time,
-    event.title
+    event.title,
+    pointRole
   ].filter(Boolean).join(" · ");
   popup.append(
     element("strong", "", popupHeading),
-    element("span", "", eventLocationLabel(event) || "장소 정보 없음")
+    element("span", "", [point.name, point.detail].filter(Boolean).join(" · ") || "장소 정보 없음")
   );
 
   const links = element("div", "map-popup-links");
-  const coordinates = `${Number(event.latitude)},${Number(event.longitude)}`;
+  const coordinates = `${point.latitude},${point.longitude}`;
   const googleLink = element("a", "", "Google 지도");
   googleLink.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(coordinates)}`;
   googleLink.target = "_blank";
   googleLink.rel = "noreferrer";
   const appleLink = element("a", "", "Apple 지도");
-  appleLink.href = `https://maps.apple.com/?ll=${encodeURIComponent(coordinates)}&q=${encodeURIComponent(event.location || event.title)}`;
+  appleLink.href = `https://maps.apple.com/?ll=${encodeURIComponent(coordinates)}&q=${encodeURIComponent(point.name || event.title)}`;
   appleLink.target = "_blank";
   appleLink.rel = "noreferrer";
   links.append(googleLink, appleLink);
   popup.append(links);
   return popup;
+}
+
+function travelDepartureDate(event) {
+  const plan = event?.travelPlan;
+  if (!plan || !event.date) return null;
+
+  const eventStart = event.startTime
+    ? new Date(`${event.date}T${event.startTime}:00`)
+    : null;
+  if (plan.naverDepartureTime) {
+    const departure = new Date(`${event.date}T${plan.naverDepartureTime}:00`);
+    if (eventStart && departure > eventStart) departure.setDate(departure.getDate() - 1);
+    return Number.isNaN(departure.getTime()) ? null : departure;
+  }
+
+  const duration = Number(plan.durationMinutes);
+  if (!eventStart || !Number.isFinite(duration)) return null;
+  return new Date(eventStart.getTime() - duration * 60 * 1000);
+}
+
+function nextUpcomingTravelEvent() {
+  const now = new Date();
+  return events
+    .map((event) => ({ event, departure: travelDepartureDate(event) }))
+    .filter(({ event, departure }) => (
+      event.travelPlan
+      && departure
+      && departure >= now
+      && dateMatchesActiveFilter(event.date)
+    ))
+    .sort((a, b) => a.departure - b.departure)[0] || null;
+}
+
+function renderUpcomingTravel() {
+  const upcoming = nextUpcomingTravelEvent();
+  const layoutChanged = plannerMapContent.classList.contains("has-upcoming-travel") !== Boolean(upcoming);
+  plannerMapContent.classList.toggle("has-upcoming-travel", Boolean(upcoming));
+  plannerMapPanel.classList.toggle("has-upcoming-travel", Boolean(upcoming));
+  upcomingTravelCard.hidden = !upcoming;
+  if (layoutChanged && plannerMap) {
+    window.setTimeout(() => plannerMap.invalidateSize(), 0);
+  }
+  if (!upcoming) {
+    upcomingTravelSteps.replaceChildren();
+    return;
+  }
+
+  const { event, departure } = upcoming;
+  const plan = event.travelPlan;
+  const destination = eventStartMapPoint(event);
+  const departureClock = `${String(departure.getHours()).padStart(2, "0")}:${String(departure.getMinutes()).padStart(2, "0")}`;
+  upcomingTravelTitle.textContent = event.title;
+  upcomingTravelDate.textContent = `${compactDate(event.date)} · ${departureClock} 출발`;
+  upcomingTravelRoute.replaceChildren(
+    element("strong", "", plan.originName || "출발지"),
+    document.createTextNode(` → ${destination?.name || event.location || event.title}`)
+  );
+  renderTravelRouteSteps(upcomingTravelSteps, plan);
+  if (upcomingTravelSteps.hidden) {
+    upcomingTravelSteps.hidden = false;
+    const duration = Number(plan.durationMinutes);
+    upcomingTravelSteps.append(element(
+      "span",
+      "planner-upcoming-travel-empty",
+      Number.isFinite(duration) ? `예상 소요 ${duration}분 · ${departureClock} 출발` : `${departureClock} 출발`
+    ));
+  }
 }
 
 function renderPlannerMap() {
@@ -1110,11 +1327,13 @@ function renderPlannerMap() {
     event.date <= mapEndDate &&
     inferredLocationType(event) === "offline"
   )));
-  const mappedEvents = offlineEvents.filter(hasMapCoordinates);
-  const unmappedCount = offlineEvents.length - mappedEvents.length;
+  const mappedEvents = offlineEvents.filter((event) => eventMapPoints(event).length);
+  const mappedPointCount = mappedEvents.reduce((count, event) => count + eventMapPoints(event).length, 0);
+  const expectedPointCount = offlineEvents.reduce((count, event) => count + (isTravelEvent(event) ? 2 : 1), 0);
+  const unmappedCount = expectedPointCount - mappedPointCount;
   const showHome = homeVisible && Boolean(homeLocation);
   mapEventCount.textContent = offlineEvents.length
-    ? `${mappedEvents.length}곳${unmappedCount ? ` · 위치 미설정 ${unmappedCount}` : ""}${showHome ? " · 집" : ""}`
+    ? `${mappedPointCount}곳${unmappedCount ? ` · 위치 미설정 ${unmappedCount}` : ""}${showHome ? " · 집" : ""}`
     : `일정 없음${showHome ? " · 집" : ""}`;
   homeMapToggle.checked = showHome;
   homeLocationRemoveButton.hidden = !homeLocation;
@@ -1124,15 +1343,17 @@ function renderPlannerMap() {
 
   const coordinates = [];
   mappedEvents.forEach((event) => {
-    const point = [Number(event.latitude), Number(event.longitude)];
-    coordinates.push(point);
-    window.L.circleMarker(point, {
-      radius: 7,
-      color: "#ffffff",
-      weight: 2,
-      fillColor: "#0071e3",
-      fillOpacity: 0.95
-    }).bindPopup(mapPopupForEvent(event, { showDate: isMapRange })).addTo(plannerMapMarkers);
+    eventMapPoints(event).forEach((mapLocation) => {
+      const point = [mapLocation.latitude, mapLocation.longitude];
+      coordinates.push(point);
+      window.L.circleMarker(point, {
+        radius: 7,
+        color: "#ffffff",
+        weight: 2,
+        fillColor: mapLocation.role === "departure" ? "#34c759" : "#0071e3",
+        fillOpacity: 0.95
+      }).bindPopup(mapPopupForEvent(event, mapLocation, { showDate: isMapRange })).addTo(plannerMapMarkers);
+    });
   });
 
   if (showHome) {
@@ -1168,6 +1389,7 @@ function renderPlannerMap() {
 
 function renderPlannerOverview() {
   renderMiniCalendar();
+  renderUpcomingTravel();
   renderPlannerMap();
 }
 
@@ -1237,6 +1459,257 @@ function deadlineDayLabel(value) {
 function formatTime(event) {
   if (!event.startTime) return "All day";
   return event.endTime ? `${event.startTime}–${event.endTime}` : event.startTime;
+}
+
+function parseClockMinutes(value) {
+  const normalized = normalizeTime(String(value || ""));
+  if (!normalized) return null;
+  const [hours, minutes] = normalized.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function clockLabel(totalMinutes) {
+  if (!Number.isFinite(totalMinutes)) return "—";
+  const dayOffset = Math.floor(totalMinutes / 1440);
+  const wrapped = ((totalMinutes % 1440) + 1440) % 1440;
+  const label = `${String(Math.floor(wrapped / 60)).padStart(2, "0")}:${String(wrapped % 60).padStart(2, "0")}`;
+  if (dayOffset < 0) return `전날 ${label}`;
+  if (dayOffset > 0) return `다음 날 ${label}`;
+  return label;
+}
+
+function travelOriginCandidates(targetEvent) {
+  const earlierEvents = events
+    .filter((event) => (
+      event.id !== targetEvent.id &&
+      event.date === targetEvent.date &&
+      inferredLocationType(event) === "offline" &&
+      eventEndMapPoint(event) &&
+      (event.endTime || event.startTime || "00:00") <= (targetEvent.startTime || "23:59")
+    ))
+    .sort((a, b) => (b.endTime || b.startTime || "00:00").localeCompare(a.endTime || a.startTime || "00:00"))
+    .map((event) => {
+      const endpoint = eventEndMapPoint(event);
+      return {
+        key: `event:${event.id}`,
+        name: endpoint.name || event.title,
+        label: `${event.endTime || event.startTime || "시간 미정"} · ${event.title} (${endpoint.name || "장소"})`,
+        latitude: endpoint.latitude,
+        longitude: endpoint.longitude
+      };
+    });
+
+  if (homeLocation) {
+    earlierEvents.push({
+      key: "home",
+      name: homeLocation.name || "집",
+      label: `집 · ${homeLocation.name || homeLocation.address || "저장된 위치"}`,
+      latitude: Number(homeLocation.latitude),
+      longitude: Number(homeLocation.longitude)
+    });
+  }
+  return earlierEvents;
+}
+
+function selectedTravelOrigin() {
+  return travelOriginCandidates(events.find((event) => event.id === travelEventId) || {})
+    .find((origin) => origin.key === travelOriginSelect.value) || null;
+}
+
+function selectedTravelMode() {
+  return travelForm.querySelector('input[name="travelMode"]:checked')?.value || "traffic";
+}
+
+function updateTravelLinks() {
+  const event = events.find((item) => item.id === travelEventId);
+  const origin = selectedTravelOrigin();
+  const destination = eventStartMapPoint(event);
+  if (!event || !origin || !destination) {
+    travelNaverLink.removeAttribute("href");
+    delete travelNaverLink.dataset.eventId;
+    return;
+  }
+
+  const mode = selectedTravelMode();
+  const destinationName = destination.name || event.title;
+  const naverMode = { traffic: "transit", car: "car", walk: "walk", bicycle: "bicycle" }[mode];
+  const naverPoint = (name, latitude, longitude) => {
+    const latitudeNumber = Math.max(-85.05112878, Math.min(85.05112878, Number(latitude)));
+    const longitudeNumber = Number(longitude);
+    const worldExtent = 20037508.34;
+    const x = longitudeNumber * worldExtent / 180;
+    const mercatorLatitude = Math.log(Math.tan((90 + latitudeNumber) * Math.PI / 360)) / (Math.PI / 180);
+    const y = mercatorLatitude * worldExtent / 180;
+    return `${x},${y},${encodeURIComponent(name)},,PLACE_POI`;
+  };
+  const naverOrigin = naverPoint(origin.name, origin.latitude, origin.longitude);
+  const naverDestination = naverPoint(destinationName, destination.latitude, destination.longitude);
+  const naverRoute = naverMode === "transit" ? "transit/1" : naverMode;
+  const naverUrl = new URL(`https://map.naver.com/p/directions/${naverOrigin}/${naverDestination}/-/${naverRoute}`);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(event.date || "")) {
+    const now = new Date();
+    const currentTime = [now.getHours(), now.getMinutes()]
+      .map((value) => String(value).padStart(2, "0"))
+      .join(":");
+    naverUrl.searchParams.set("departureTime", `${event.date}T${currentTime}:00`);
+  }
+  travelNaverLink.href = naverUrl.toString();
+  travelNaverLink.target = "_blank";
+  travelNaverLink.rel = "noopener noreferrer";
+  travelNaverLink.textContent = "네이버지도에서 확인 ↗";
+  travelNaverLink.dataset.eventId = event.id;
+  travelNaverLink.dataset.eventTitle = event.title;
+  travelNaverLink.dataset.originKey = origin.key;
+  travelNaverLink.dataset.originName = origin.name;
+  travelNaverLink.dataset.targetArrival = event.startTime || "";
+  travelNaverLink.dataset.eventDate = event.date || "";
+}
+
+function updateTravelCalculations() {
+  const event = events.find((item) => item.id === travelEventId);
+  const targetMinutes = parseClockMinutes(event?.startTime || "");
+  const durationMinutes = Number(travelDuration.value);
+  const hasDuration = travelDuration.value !== "" && Number.isFinite(durationMinutes) && durationMinutes >= 0;
+  const recommended = targetMinutes !== null && hasDuration
+    ? targetMinutes - durationMinutes
+    : null;
+  travelRecommendedDeparture.textContent = clockLabel(recommended);
+}
+
+function setTravelManualMode(active) {
+  travelManualMode = Boolean(active);
+  travelManualPanel.hidden = !travelManualMode;
+  travelManualToggle.setAttribute("aria-expanded", String(travelManualMode));
+  travelManualToggle.textContent = travelManualMode ? "수동 입력 취소" : "수동 입력";
+  travelManualToggle.classList.toggle("is-active", travelManualMode);
+  const event = events.find((item) => item.id === travelEventId);
+  if (travelManualMode) {
+    travelHelper.textContent = event?.startTime
+      ? `${event.startTime} 일정 시작에 맞춰 출발 시간을 계산해요.`
+      : "수동 계산을 사용하려면 일정에 시작 시각을 먼저 입력해주세요.";
+    updateTravelCalculations();
+  } else {
+    const saved = event?.travelPlan;
+    travelHelper.textContent = saved?.naverDepartureTime
+      ? `네이버지도에서 ${saved.durationMinutes}분 경로를 가져왔어요 · ${saved.naverDepartureTime} 출발${saved.naverArrivalTime ? ` · ${saved.naverArrivalTime} 도착` : ""}.`
+      : "네이버지도에서 원하는 경로와 출발 시각을 고른 뒤 가져오세요.";
+  }
+}
+
+function travelStationTerminal(time, station, suffix, note = "", showTime = true) {
+  const terminal = element("div", "travel-step-terminal");
+  const main = element("div", `travel-step-terminal-main${showTime ? "" : " is-no-time"}`);
+  if (showTime) main.append(element("time", "travel-step-time", time || "—"));
+  main.append(element("strong", "", station || "역 정보 없음"), element("span", "travel-step-suffix", suffix));
+  terminal.append(main);
+  if (note) terminal.append(element("span", "travel-terminal-note", note));
+  return terminal;
+}
+
+function renderTravelRouteSteps(container, plan = {}) {
+  container.replaceChildren();
+  const steps = normalizeTravelRouteSteps(plan.routeSteps);
+  container.hidden = !steps.length;
+  if (!steps.length) return;
+
+  const boundary = element("div", "travel-route-boundary");
+  boundary.append(
+    element("strong", "", `${plan.naverDepartureTime || "—"} 출발`),
+    element("span", "", `${plan.naverArrivalTime || "—"} 도착`)
+  );
+  container.append(boundary);
+
+  steps.forEach((step) => {
+    const item = element("article", `travel-route-step is-${step.type}`);
+    const icon = element("span", "travel-step-icon", { walk: "🚶", subway: "🚇", bus: "🚌" }[step.type]);
+    const body = element("div", "travel-step-body");
+
+    if (step.type === "walk") {
+      body.append(element("strong", "travel-step-heading", "도보"));
+      const details = [
+        Number.isFinite(step.durationMinutes) ? `${step.durationMinutes}분` : "",
+        step.distance
+      ].filter(Boolean).join(" · ");
+      if (details) body.append(element("span", "travel-step-detail", details));
+    } else {
+      const heading = element("div", "travel-step-heading");
+      const lines = step.type === "bus" && step.alternateLines.length
+        ? step.alternateLines
+        : [step.line || (step.type === "bus" ? "버스" : "지하철")];
+      heading.append(element("span", `travel-line-badge is-${step.type}`, lines.join(" · ")));
+      const headingDetail = step.type === "bus"
+        ? (step.nextStation ? `${step.nextStation} 방면` : step.direction)
+        : [step.direction, step.nextStation ? `(${step.nextStation} 방면)` : ""].filter(Boolean).join(" ");
+      if (headingDetail) heading.append(element("span", "travel-heading-detail", headingDetail));
+      body.append(heading);
+      const movement = [
+        Number.isFinite(step.stopCount) ? `${step.stopCount}개 ${step.stopUnit}` : "",
+        Number.isFinite(step.durationMinutes) ? `${step.durationMinutes}분` : ""
+      ].filter(Boolean).join(" · ");
+      const stations = element("div", "travel-step-stations");
+      const journey = element("div", "travel-step-journey");
+      journey.append(element("span", "travel-station-arrow", "→"));
+      if (movement) journey.append(element("span", "travel-journey-detail", movement));
+      const boardingNote = [
+        step.fastTransfer ? `빠른 환승 ${step.fastTransfer}` : "",
+        step.boardingPosition ? `타는 곳 ${step.boardingPosition}` : ""
+      ].filter(Boolean).join(" · ");
+      const showTransitTimes = step.type !== "bus";
+      stations.append(
+        travelStationTerminal(step.boardTime, step.boardStation, "승차", boardingNote, showTransitTimes),
+        journey,
+        travelStationTerminal(step.alightTime, step.alightStation, "하차", step.exit, showTransitTimes)
+      );
+      body.append(stations);
+    }
+
+    item.append(icon, body);
+    container.append(item);
+  });
+}
+
+function openTravelPlanner(eventId) {
+  const event = events.find((item) => item.id === eventId);
+  if (!event || inferredLocationType(event) !== "offline") return;
+  const destination = eventStartMapPoint(event);
+  if (!destination) {
+    window.alert(isTravelEvent(event)
+      ? "먼저 일정 보기에서 출발 장소를 검색해 지도 위치를 저장해주세요."
+      : "먼저 일정 보기에서 장소를 검색해 지도 위치를 저장해주세요.");
+    return;
+  }
+
+  const origins = travelOriginCandidates(event);
+  if (!origins.length) {
+    window.alert("출발지로 사용할 이전 일정이나 집 위치가 없어요. 지도 위의 ‘집 설정’에서 집 위치를 먼저 저장해주세요.");
+    return;
+  }
+
+  travelEventId = event.id;
+  travelDialogTitle.textContent = `${event.title} 출발 시간`;
+  travelDestinationLabel.textContent = [destination.name, destination.detail].filter(Boolean).join(" · ") || event.title;
+  travelOriginSelect.replaceChildren();
+  origins.forEach((origin) => {
+    const option = element("option", "", origin.label);
+    option.value = origin.key;
+    travelOriginSelect.append(option);
+  });
+
+  const saved = event.travelPlan || {};
+  travelOriginSelect.value = origins.some((origin) => origin.key === saved.originKey)
+    ? saved.originKey
+    : origins[0].key;
+  const mode = ["traffic", "car", "walk", "bicycle"].includes(saved.mode) ? saved.mode : "traffic";
+  travelForm.querySelector(`input[name="travelMode"][value="${mode}"]`).checked = true;
+  travelDuration.value = Number.isFinite(Number(saved.durationMinutes)) ? saved.durationMinutes : "";
+  travelClearButton.hidden = !event.travelPlan;
+  travelHelper.textContent = saved.naverDepartureTime
+    ? `네이버지도에서 ${saved.durationMinutes}분 경로를 가져왔어요 · ${saved.naverDepartureTime} 출발${saved.naverArrivalTime ? ` · ${saved.naverArrivalTime} 도착` : ""}.`
+    : "네이버지도에서 원하는 경로와 출발 시각을 고른 뒤 가져오세요.";
+  renderTravelRouteSteps(travelStepsPreview, saved);
+  setTravelManualMode(Boolean(saved.manual || (saved.durationMinutes !== undefined && !saved.naverDepartureTime)));
+  updateTravelLinks();
+  travelDialog.showModal();
 }
 
 function element(tag, className, text) {
@@ -1371,9 +1844,13 @@ function eventCard(event, { showDate = false, showCategory = true, stackDateTime
   card.open = selectedEventId === event.id;
   const summary = element("summary", "compact-event-summary");
   const primary = element("span", "compact-event-primary");
+  const routeNames = isTravelEvent(event)
+    ? [event.departureLocation, event.destinationLocation].filter(Boolean).join(" → ")
+    : "";
+  const displayedTitle = routeNames ? `${event.title} · ${routeNames}` : event.title;
   if (stackDateTime) {
     primary.append(
-      element("span", "compact-event-title", event.title),
+      element("span", "compact-event-title", displayedTitle),
       element("span", "compact-event-subline", `${compactDate(event.date)} · ${event.startTime || "All day"}`)
     );
   } else {
@@ -1381,7 +1858,7 @@ function eventCard(event, { showDate = false, showCategory = true, stackDateTime
     primary.append(
       element("span", `compact-event-time${event.startTime ? "" : " is-all-day"}`, event.startTime || "All day"),
       element("span", "compact-event-divider", "—"),
-      element("span", "compact-event-title", event.title)
+      element("span", "compact-event-title", displayedTitle)
     );
   }
 
@@ -1395,14 +1872,17 @@ function eventCard(event, { showDate = false, showCategory = true, stackDateTime
   const expanded = element("div", "event-expanded");
   const info = element("div", "event-expanded-info");
   const dateInfo = element("div", "event-info-item");
-  dateInfo.append(element("span", "", "일시"), element("strong", "", `${compactDate(event.date)} · ${formatTime(event)}`));
+  dateInfo.append(
+    element("span", "", isTravelEvent(event) ? "이동 시간" : "일시"),
+    element("strong", "", `${compactDate(event.date)} · ${formatTime(event)}`)
+  );
   info.append(dateInfo);
 
   const locationType = inferredLocationType(event);
   const locationText = locationType === "online" ? "온라인" : eventLocationLabel(event);
   if (locationText) {
     const locationInfo = element("div", "event-info-item");
-    locationInfo.append(element("span", "", "위치"), element("strong", "", locationText));
+    locationInfo.append(element("span", "", isTravelEvent(event) ? "경로" : "위치"), element("strong", "", locationText));
     info.append(locationInfo);
   }
   expanded.append(info);
@@ -1433,7 +1913,39 @@ function eventCard(event, { showDate = false, showCategory = true, stackDateTime
     expanded.append(notes);
   }
 
+  if (event.travelPlan?.durationMinutes !== undefined && event.travelPlan?.durationMinutes !== "") {
+    const travelSummary = element("div", "event-notes travel-plan-summary");
+    const duration = Number(event.travelPlan.durationMinutes);
+    const durationText = duration >= 60
+      ? `${Math.floor(duration / 60)}시간${duration % 60 ? ` ${duration % 60}분` : ""}`
+      : `${duration}분`;
+    const target = parseClockMinutes(event.travelPlan.targetArrival);
+    const departure = event.travelPlan.naverDepartureTime || (target !== null
+      ? clockLabel(target - duration)
+      : event.travelPlan.departureTime || "시간 미정");
+    travelSummary.append(
+      element("strong", "", "이동 계획"),
+      element("p", "", `${departure} 출발 · 예상 ${durationText}`)
+    );
+    if (event.travelPlan.naverArrivalTime) {
+      const capturedTimes = [
+        event.travelPlan.naverArrivalTime ? `${event.travelPlan.naverArrivalTime} 도착` : ""
+      ].filter(Boolean).join(" · ");
+      travelSummary.append(element("p", "", `네이버 확인 · ${capturedTimes}`));
+    }
+    const routeSteps = element("section", "travel-steps-preview compact-travel-steps");
+    renderTravelRouteSteps(routeSteps, event.travelPlan);
+    if (!routeSteps.hidden) travelSummary.append(routeSteps);
+    expanded.append(travelSummary);
+  }
+
   const actions = element("div", "event-actions");
+  if (inferredLocationType(event) === "offline") {
+    const travelButton = element("button", "travel-check-button", "출발 시간 확인");
+    travelButton.type = "button";
+    travelButton.addEventListener("click", () => openTravelPlanner(event.id));
+    actions.append(travelButton);
+  }
   const detailButton = element("button", "detail-button", "자세히 보기");
   detailButton.type = "button";
   detailButton.addEventListener("click", () => {
@@ -1985,6 +2497,7 @@ function renderNotes() {
 }
 
 function renderAll() {
+  removeStoredTravelSummaryImages();
   renderTimeline();
   renderCategories();
   renderTasks();
@@ -1993,9 +2506,51 @@ function renderAll() {
   renderPlannerOverview();
 }
 
-function clearLocationSearchResults() {
-  locationSearchResults.hidden = true;
-  locationSearchResults.replaceChildren();
+function locationSearchControls(kind = "regular") {
+  if (kind === "departure") {
+    return {
+      input: departureLocationInput,
+      button: departureLocationSearchButton,
+      status: departureLocationSearchStatus,
+      results: departureLocationSearchResults
+    };
+  }
+  if (kind === "destination") {
+    return {
+      input: destinationLocationInput,
+      button: destinationLocationSearchButton,
+      status: destinationLocationSearchStatus,
+      results: destinationLocationSearchResults
+    };
+  }
+  return {
+    input: locationInput,
+    button: locationSearchButton,
+    status: locationSearchStatus,
+    results: locationSearchResults
+  };
+}
+
+function selectedLocationFor(kind = "regular") {
+  if (kind === "departure") return selectedDepartureLocation;
+  if (kind === "destination") return selectedDestinationLocation;
+  return selectedLocation;
+}
+
+function setSelectedLocationFor(kind, value) {
+  if (kind === "departure") selectedDepartureLocation = value;
+  else if (kind === "destination") selectedDestinationLocation = value;
+  else selectedLocation = value;
+}
+
+function clearLocationSearchResults(kind = "regular") {
+  const { results } = locationSearchControls(kind);
+  results.hidden = true;
+  results.replaceChildren();
+}
+
+function clearAllLocationSearchResults() {
+  ["regular", "departure", "destination"].forEach(clearLocationSearchResults);
 }
 
 function locationResultName(result) {
@@ -2008,30 +2563,34 @@ function locationResultName(result) {
     || "검색된 장소";
 }
 
-function selectLocationResult(result) {
+function selectLocationResult(result, kind = "regular") {
   const latitude = Number(result.lat);
   const longitude = Number(result.lon);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
 
-  selectedLocation = {
+  const selected = {
     latitude,
     longitude,
     name: locationResultName(result),
     address: result.display_name || locationResultName(result)
   };
+  const controls = locationSearchControls(kind);
+  setSelectedLocationFor(kind, selected);
   locationSearchController?.abort();
   locationSearchController = null;
-  locationSearchButton.disabled = false;
-  locationInput.value = selectedLocation.name;
-  locationSearchStatus.textContent = "지도 위치가 선택됐어요.";
-  clearLocationSearchResults();
-  locationInput.focus({ preventScroll: true });
+  locationSearchKind = null;
+  controls.button.disabled = false;
+  controls.input.value = selected.name;
+  controls.status.textContent = "지도 위치가 선택됐어요.";
+  clearLocationSearchResults(kind);
+  controls.input.focus({ preventScroll: true });
 }
 
-function renderLocationSearchResults(results) {
-  locationSearchResults.replaceChildren();
+function renderLocationSearchResults(results, kind = "regular") {
+  const controls = locationSearchControls(kind);
+  controls.results.replaceChildren();
   if (!results.length) {
-    locationSearchResults.append(element("p", "category-menu-hint", "검색 결과가 없어요. 장소명을 더 구체적으로 입력해보세요."));
+    controls.results.append(element("p", "category-menu-hint", "검색 결과가 없어요. 장소명을 더 구체적으로 입력해보세요."));
   } else {
     results.forEach((result) => {
       const button = element("button", "location-result-button");
@@ -2040,11 +2599,11 @@ function renderLocationSearchResults(results) {
         element("strong", "", locationResultName(result)),
         element("span", "", result.display_name || "")
       );
-      button.addEventListener("click", () => selectLocationResult(result));
-      locationSearchResults.append(button);
+      button.addEventListener("click", () => selectLocationResult(result, kind));
+      controls.results.append(button);
     });
   }
-  locationSearchResults.hidden = false;
+  controls.results.hidden = false;
 }
 
 async function requestNominatim(query, controller) {
@@ -2072,36 +2631,39 @@ async function requestNominatim(query, controller) {
   return Array.isArray(data) ? data : [];
 }
 
-async function searchLocation() {
-  const query = locationInput.value.trim();
+async function searchLocation(kind = "regular") {
+  const controls = locationSearchControls(kind);
+  const query = controls.input.value.trim();
   if (query.length < 2) {
-    locationSearchStatus.textContent = query ? "두 글자 이상 입력하면 장소를 찾아드려요." : "";
-    clearLocationSearchResults();
+    controls.status.textContent = query ? "두 글자 이상 입력하면 장소를 찾아드려요." : "";
+    clearLocationSearchResults(kind);
     return;
   }
 
-  locationSearchController?.abort();
+  resetLocationSearch();
   const controller = new AbortController();
   locationSearchController = controller;
-  locationSearchButton.disabled = true;
-  locationSearchStatus.textContent = "장소를 검색하고 있어요…";
-  clearLocationSearchResults();
+  locationSearchKind = kind;
+  controls.button.disabled = true;
+  controls.status.textContent = "장소를 검색하고 있어요…";
+  clearLocationSearchResults(kind);
 
   try {
     const results = await requestNominatim(query, controller);
     if (controller.signal.aborted) return;
-    renderLocationSearchResults(results);
-    locationSearchStatus.textContent = results.length
+    renderLocationSearchResults(results, kind);
+    controls.status.textContent = results.length
       ? "검색 결과에서 정확한 장소를 선택해주세요."
       : "검색 결과가 없어요. 장소명이나 주소를 바꿔보세요.";
   } catch (error) {
     if (error.name === "AbortError") return;
     console.error(error);
-    locationSearchStatus.textContent = "장소를 검색하지 못했어요. 잠시 후 다시 시도해주세요.";
+    controls.status.textContent = "장소를 검색하지 못했어요. 잠시 후 다시 시도해주세요.";
   } finally {
     if (locationSearchController === controller) {
       locationSearchController = null;
-      locationSearchButton.disabled = false;
+      locationSearchKind = null;
+      controls.button.disabled = false;
     }
   }
 }
@@ -2109,7 +2671,10 @@ async function searchLocation() {
 function resetLocationSearch() {
   locationSearchController?.abort();
   locationSearchController = null;
-  locationSearchButton.disabled = false;
+  locationSearchKind = null;
+  ["regular", "departure", "destination"].forEach((kind) => {
+    locationSearchControls(kind).button.disabled = false;
+  });
 }
 
 function clearHomeLocationResults() {
@@ -2211,9 +2776,12 @@ function closeHomeLocationEditor() {
 }
 
 function syncLocationFields() {
+  const eventKind = document.querySelector('input[name="eventKind"]:checked')?.value || "regular";
   const locationType = document.querySelector('input[name="locationType"]:checked')?.value || "offline";
-  offlineLocationField.hidden = locationType !== "offline";
-  onlineLinkField.hidden = locationType !== "online";
+  regularEventFields.hidden = eventKind === "travel";
+  travelEventFields.hidden = eventKind !== "travel";
+  offlineLocationField.hidden = eventKind === "travel" || locationType !== "offline";
+  onlineLinkField.hidden = eventKind === "travel" || locationType !== "online";
 }
 
 function syncConditionalFields() {
@@ -2233,8 +2801,12 @@ function clearFormValues() {
   closeCategoryMenu();
   resetLocationSearch();
   selectedLocation = null;
+  selectedDepartureLocation = null;
+  selectedDestinationLocation = null;
   locationSearchStatus.textContent = "";
-  clearLocationSearchResults();
+  departureLocationSearchStatus.textContent = "";
+  destinationLocationSearchStatus.textContent = "";
+  clearAllLocationSearchResults();
   form.reset();
   document.querySelector("#eventId").value = "";
   renderTodoInputs();
@@ -2285,11 +2857,13 @@ function showEventInForm(id, mode = "view") {
   document.querySelector("#date").value = event.date;
   document.querySelector("#startTime").value = event.startTime || "";
   document.querySelector("#endTime").value = event.endTime || "";
+  document.querySelector(`input[name="eventKind"][value="${isTravelEvent(event) ? "travel" : "regular"}"]`).checked = true;
   const locationType = inferredLocationType(event);
   document.querySelector(`input[name="locationType"][value="${locationType}"]`).checked = true;
   document.querySelector("#location").value = event.location || "";
   locationDetailInput.value = event.locationDetail || "";
   selectedLocation = hasMapCoordinates(event)
+    && !isTravelEvent(event)
     ? {
         latitude: Number(event.latitude),
         longitude: Number(event.longitude),
@@ -2298,7 +2872,29 @@ function showEventInForm(id, mode = "view") {
       }
     : null;
   locationSearchStatus.textContent = selectedLocation ? "지도 위치가 저장된 일정이에요." : "";
-  clearLocationSearchResults();
+  departureLocationInput.value = event.departureLocation || "";
+  departureLocationDetailInput.value = event.departureLocationDetail || "";
+  selectedDepartureLocation = eventStartMapPoint(event) && isTravelEvent(event)
+    ? {
+        latitude: Number(event.departureLatitude),
+        longitude: Number(event.departureLongitude),
+        name: event.departureLocation || "출발 장소",
+        address: event.departureLocationAddress || event.departureLocation || ""
+      }
+    : null;
+  departureLocationSearchStatus.textContent = selectedDepartureLocation ? "지도 위치가 저장된 출발지예요." : "";
+  destinationLocationInput.value = event.destinationLocation || "";
+  destinationLocationDetailInput.value = event.destinationLocationDetail || "";
+  selectedDestinationLocation = eventEndMapPoint(event) && isTravelEvent(event)
+    ? {
+        latitude: Number(event.destinationLatitude),
+        longitude: Number(event.destinationLongitude),
+        name: event.destinationLocation || "도착 장소",
+        address: event.destinationLocationAddress || event.destinationLocation || ""
+      }
+    : null;
+  destinationLocationSearchStatus.textContent = selectedDestinationLocation ? "지도 위치가 저장된 도착지예요." : "";
+  clearAllLocationSearchResults();
   document.querySelector("#url").value = event.url || "";
   document.querySelector("#category").value = event.category || "ETC";
   document.querySelector("#notes").value = event.notes || "";
@@ -2408,16 +3004,21 @@ form.addEventListener("submit", (submitEvent) => {
   submitEvent.preventDefault();
   if (!requireSignIn("로그인하면 일정을 저장할 수 있어요.")) return;
   const id = document.querySelector("#eventId").value;
+  const existingEvent = id ? events.find((item) => item.id === id) : null;
   const startTime = normalizeTime(document.querySelector("#startTime").value);
   const endTime = normalizeTime(document.querySelector("#endTime").value);
   const reservationStatus = currentReservationStatus();
   const cancellationDeadlineDate = document.querySelector("#cancellationDeadlineDate").value;
   const cancellationDeadlineTime = normalizeTime(document.querySelector("#cancellationDeadlineTime").value);
   const todoResult = collectTodoInputs();
-  const locationType = document.querySelector('input[name="locationType"]:checked').value;
-  const typedLocation = locationType === "offline" ? locationInput.value.trim() : "";
-  const location = locationType === "offline" ? selectedLocation?.name || typedLocation : "";
-  const url = locationType === "online" ? normalizeUrl(document.querySelector("#url").value) : "";
+  const eventKind = document.querySelector('input[name="eventKind"]:checked')?.value || "regular";
+  const isTravel = eventKind === "travel";
+  const locationType = isTravel ? "offline" : document.querySelector('input[name="locationType"]:checked').value;
+  const typedLocation = !isTravel && locationType === "offline" ? locationInput.value.trim() : "";
+  const departureLocation = isTravel ? selectedDepartureLocation?.name || departureLocationInput.value.trim() : "";
+  const destinationLocation = isTravel ? selectedDestinationLocation?.name || destinationLocationInput.value.trim() : "";
+  const location = isTravel ? destinationLocation : locationType === "offline" ? selectedLocation?.name || typedLocation : "";
+  const url = !isTravel && locationType === "online" ? normalizeUrl(document.querySelector("#url").value) : "";
 
   if (startTime === null || endTime === null || cancellationDeadlineTime === null) {
     window.alert("시간은 24시간제로 입력해주세요. 예: 09:00, 16:30");
@@ -2426,6 +3027,11 @@ form.addEventListener("submit", (submitEvent) => {
 
   if (todoResult.error) {
     window.alert(todoResult.error);
+    return;
+  }
+
+  if (isTravel && (!startTime || !endTime || !departureLocation || !destinationLocation)) {
+    window.alert("이동 일정에는 출발·도착 시간과 두 장소를 모두 입력해주세요.");
     return;
   }
 
@@ -2450,12 +3056,23 @@ form.addEventListener("submit", (submitEvent) => {
     date: document.querySelector("#date").value,
     startTime,
     endTime,
+    eventKind,
     locationType,
     location,
-    locationDetail: locationType === "offline" ? locationDetailInput.value.trim() : "",
-    locationAddress: locationType === "offline" ? selectedLocation?.address || "" : "",
-    latitude: locationType === "offline" ? selectedLocation?.latitude ?? null : null,
-    longitude: locationType === "offline" ? selectedLocation?.longitude ?? null : null,
+    locationDetail: !isTravel && locationType === "offline" ? locationDetailInput.value.trim() : "",
+    locationAddress: !isTravel && locationType === "offline" ? selectedLocation?.address || "" : "",
+    latitude: !isTravel && locationType === "offline" ? selectedLocation?.latitude ?? null : null,
+    longitude: !isTravel && locationType === "offline" ? selectedLocation?.longitude ?? null : null,
+    departureLocation,
+    departureLocationDetail: isTravel ? departureLocationDetailInput.value.trim() : "",
+    departureLocationAddress: isTravel ? selectedDepartureLocation?.address || "" : "",
+    departureLatitude: isTravel ? selectedDepartureLocation?.latitude ?? null : null,
+    departureLongitude: isTravel ? selectedDepartureLocation?.longitude ?? null : null,
+    destinationLocation,
+    destinationLocationDetail: isTravel ? destinationLocationDetailInput.value.trim() : "",
+    destinationLocationAddress: isTravel ? selectedDestinationLocation?.address || "" : "",
+    destinationLatitude: isTravel ? selectedDestinationLocation?.latitude ?? null : null,
+    destinationLongitude: isTravel ? selectedDestinationLocation?.longitude ?? null : null,
     url,
     category: normalizedCategory(document.querySelector("#category").value),
     notes: document.querySelector("#notes").value.trim(),
@@ -2469,8 +3086,9 @@ form.addEventListener("submit", (submitEvent) => {
       ? document.querySelector("#cancellationNotes").value.trim()
       : "",
     todos: todoResult.todos,
+    travelPlan: existingEvent?.travelPlan || null,
     createdAt: id
-      ? events.find((item) => item.id === id)?.createdAt || new Date().toISOString()
+      ? existingEvent?.createdAt || new Date().toISOString()
       : new Date().toISOString()
   };
 
@@ -2503,29 +3121,35 @@ calendarNextButton.addEventListener("click", () => shiftCalendarMonth(1));
 calendarTodayButton.addEventListener("click", selectTodayInCalendar);
 calendarThisWeekButton.addEventListener("click", () => selectWeekInCalendar(0));
 calendarNextWeekButton.addEventListener("click", () => selectWeekInCalendar(1));
-locationSearchButton.addEventListener("click", searchLocation);
-locationInput.addEventListener("input", () => {
-  if (selectedLocation && locationInput.value.trim() !== selectedLocation.name) {
-    selectedLocation = null;
-    locationSearchStatus.textContent = "주소가 바뀌었어요. 다시 검색해 위치를 선택해주세요.";
-  } else {
-    locationSearchStatus.textContent = locationInput.value.trim().length >= 2
-      ? "지도에 표시하려면 검색해주세요. 검색하지 않아도 저장할 수 있어요."
-      : "";
-  }
-  clearLocationSearchResults();
-  resetLocationSearch();
-});
-locationInput.addEventListener("keydown", (keyEvent) => {
-  if (keyEvent.key === "Enter") {
-    keyEvent.preventDefault();
-    searchLocation();
-  }
-  if (keyEvent.key === "Escape") {
+function bindLocationSearchField(kind) {
+  const controls = locationSearchControls(kind);
+  controls.button.addEventListener("click", () => searchLocation(kind));
+  controls.input.addEventListener("input", () => {
+    const selected = selectedLocationFor(kind);
+    if (selected && controls.input.value.trim() !== selected.name) {
+      setSelectedLocationFor(kind, null);
+      controls.status.textContent = "주소가 바뀌었어요. 다시 검색해 위치를 선택해주세요.";
+    } else {
+      controls.status.textContent = controls.input.value.trim().length >= 2
+        ? "지도에 표시하려면 검색해주세요. 검색하지 않아도 저장할 수 있어요."
+        : "";
+    }
+    clearLocationSearchResults(kind);
     resetLocationSearch();
-    clearLocationSearchResults();
-  }
-});
+  });
+  controls.input.addEventListener("keydown", (keyEvent) => {
+    if (keyEvent.key === "Enter") {
+      keyEvent.preventDefault();
+      searchLocation(kind);
+    }
+    if (keyEvent.key === "Escape") {
+      resetLocationSearch();
+      clearLocationSearchResults(kind);
+    }
+  });
+}
+
+["regular", "departure", "destination"].forEach(bindLocationSearchField);
 homeMapToggle.addEventListener("change", () => {
   if (!requireSignIn("로그인하면 집 위치 표시를 변경할 수 있어요.")) {
     homeMapToggle.checked = false;
@@ -2594,12 +3218,15 @@ categoryMenuButton.addEventListener("click", () => {
 });
 document.addEventListener("pointerdown", (pointerEvent) => {
   if (!pointerEvent.target.closest(".category-picker")) closeCategoryMenu();
-  if (!pointerEvent.target.closest(".location-search-field")) clearLocationSearchResults();
+  if (!pointerEvent.target.closest(".location-search-field")) clearAllLocationSearchResults();
   if (!pointerEvent.target.closest(".home-location-editor") && !pointerEvent.target.closest("#homeLocationButton")) {
     closeHomeLocationEditor();
   }
 });
 document.querySelectorAll('input[name="locationType"]').forEach((input) => {
+  input.addEventListener("change", syncLocationFields);
+});
+document.querySelectorAll('input[name="eventKind"]').forEach((input) => {
   input.addEventListener("change", syncLocationFields);
 });
 
@@ -2691,6 +3318,143 @@ deleteNoteButton.addEventListener("click", () => {
   renderNotes();
 });
 
+travelForm.addEventListener("submit", (submitEvent) => submitEvent.preventDefault());
+travelCloseButton.addEventListener("click", () => travelDialog.close());
+travelDialog.addEventListener("click", (clickEvent) => {
+  if (clickEvent.target === travelDialog) travelDialog.close();
+});
+travelOriginSelect.addEventListener("change", updateTravelLinks);
+travelForm.querySelectorAll('input[name="travelMode"]').forEach((input) => {
+  input.addEventListener("change", updateTravelLinks);
+});
+travelDuration.addEventListener("input", updateTravelCalculations);
+travelManualToggle.addEventListener("click", () => {
+  const nextMode = !travelManualMode;
+  const event = events.find((item) => item.id === travelEventId);
+  if (nextMode && !event?.travelPlan?.manual) travelDuration.value = "";
+  setTravelManualMode(nextMode);
+});
+
+travelSaveButton.addEventListener("click", () => {
+  if (!requireSignIn("로그인하면 이동 계획을 저장할 수 있어요.")) return;
+  const event = events.find((item) => item.id === travelEventId);
+  const origin = selectedTravelOrigin();
+  const targetArrival = normalizeTime(event?.startTime || "");
+  if (!event || !origin) return;
+  if (travelManualMode && targetArrival === null) {
+    window.alert("일정에 시작 시각을 먼저 입력해주세요.");
+    return;
+  }
+
+  const durationMinutes = travelDuration.value === "" ? null : Number(travelDuration.value);
+  if (travelManualMode && (!Number.isFinite(durationMinutes) || durationMinutes < 0)) {
+    window.alert("예상 소요 시간을 분 단위로 입력해주세요.");
+    return;
+  }
+  if (!travelManualMode && !event.travelPlan?.naverDepartureTime) {
+    window.alert("네이버지도에서 경로를 가져오거나 수동 입력을 선택해주세요.");
+    return;
+  }
+
+  events = events.map((item) => item.id === event.id
+    ? {
+        ...item,
+        travelPlan: travelManualMode
+          ? {
+              originKey: origin.key,
+              originName: origin.name,
+              mode: selectedTravelMode(),
+              targetArrival,
+              durationMinutes,
+              manual: true,
+              updatedAt: new Date().toISOString()
+            }
+          : {
+              ...Object.fromEntries(Object.entries(item.travelPlan || {}).filter(([key]) => !["bufferMinutes", "summaryImage"].includes(key))),
+              originKey: origin.key,
+              originName: origin.name,
+              mode: selectedTravelMode(),
+              targetArrival: event.startTime || item.travelPlan?.targetArrival || "",
+              manual: false,
+              updatedAt: new Date().toISOString()
+            }
+      }
+    : item);
+  saveEvents();
+  renderAll();
+  travelDialog.close();
+});
+
+travelClearButton.addEventListener("click", () => {
+  const event = events.find((item) => item.id === travelEventId);
+  if (!event?.travelPlan || !window.confirm("이 일정에 저장된 이동 계획을 지울까요?")) return;
+  events = events.map((item) => item.id === event.id ? { ...item, travelPlan: null } : item);
+  saveEvents();
+  renderAll();
+  travelDialog.close();
+});
+
+window.addEventListener("message", (messageEvent) => {
+  if (messageEvent.source !== window || messageEvent.data?.source !== "serin-route-extension") return;
+  if (messageEvent.data.type !== "ROUTE_RESULT") return;
+
+  const payload = messageEvent.data.payload || {};
+  const event = events.find((item) => item.id === payload.eventId);
+  const durationMinutes = Number(payload.durationMinutes);
+  if (!event || !Number.isFinite(durationMinutes) || durationMinutes < 0) return;
+
+  const mode = ["traffic", "car", "walk", "bicycle"].includes(payload.mode) ? payload.mode : "traffic";
+  const previousPlan = event.travelPlan || {};
+  const normalizedTargetArrival = normalizeTime(payload.targetArrival || event.startTime || "");
+  const targetArrival = normalizedTargetArrival === null ? event.startTime || "" : normalizedTargetArrival;
+  events = events.map((item) => item.id === event.id
+    ? {
+        ...item,
+        travelPlan: {
+          ...Object.fromEntries(Object.entries(previousPlan).filter(([key]) => !["bufferMinutes", "summaryImage"].includes(key))),
+          originKey: payload.originKey || previousPlan.originKey || "",
+          originName: payload.originName || previousPlan.originName || "",
+          mode,
+          targetArrival,
+          durationMinutes,
+          naverDepartureTime: String(payload.departureTime || ""),
+          naverArrivalTime: String(payload.arrivalTime || ""),
+          routeSteps: normalizeTravelRouteSteps(payload.steps),
+          manual: false,
+          capturedAt: payload.capturedAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      }
+    : item);
+  saveEvents();
+  renderAll();
+
+  if (travelEventId === event.id) {
+    travelDuration.value = String(durationMinutes);
+    const modeInput = travelForm.querySelector(`input[name="travelMode"][value="${mode}"]`);
+    if (modeInput) modeInput.checked = true;
+    setTravelManualMode(false);
+    updateTravelLinks();
+    renderTravelRouteSteps(travelStepsPreview, {
+      ...previousPlan,
+      naverDepartureTime: payload.departureTime || "",
+      naverArrivalTime: payload.arrivalTime || "",
+      routeSteps: payload.steps || []
+    });
+    const capturedTimes = [
+      payload.departureTime ? `${payload.departureTime} 출발` : "",
+      payload.arrivalTime ? `${payload.arrivalTime} 도착` : ""
+    ].filter(Boolean).join(" · ");
+    travelHelper.textContent = `네이버지도에서 ${durationMinutes}분 경로를 가져왔어요${capturedTimes ? ` · ${capturedTimes}` : ""}.`;
+  }
+
+  window.postMessage({
+    source: "serin-schedule-page",
+    type: "ROUTE_RESULT_ACCEPTED",
+    eventId: event.id
+  }, window.location.origin === "null" ? "*" : window.location.origin);
+});
+
 calendarFilterResetButton.addEventListener("click", resetCalendarDateFilter);
 
 clearButton.addEventListener("click", () => {
@@ -2710,7 +3474,7 @@ clearButton.addEventListener("click", () => {
 
 exportButton.addEventListener("click", () => {
   if (!requireSignIn("로그인하면 내 데이터를 백업할 수 있어요.")) return;
-  const backup = { version: 7, events, categoryOrder, notes, homeLocation, homeVisible };
+  const backup = { version: 8, events, categoryOrder, notes, homeLocation, homeVisible };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -2766,3 +3530,4 @@ applyFormMode("idle");
 initializePlannerMap();
 renderAll();
 initializeCloudSync();
+window.setInterval(renderUpcomingTravel, 60 * 1000);

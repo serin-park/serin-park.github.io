@@ -105,8 +105,23 @@
             <div class="home-location-results" id="homeLocationResults" hidden></div>
             <button class="home-location-remove" id="homeLocationRemoveButton" type="button" hidden>저장된 집 위치 삭제</button>
           </div>
-          <div class="planner-map" id="plannerMap" aria-label="선택한 날짜의 오프라인 일정 지도"></div>
-          <div class="planner-map-empty" id="plannerMapEmpty" hidden></div>
+          <div class="planner-map-content" id="plannerMapContent">
+            <div class="planner-map-stage">
+              <div class="planner-map" id="plannerMap" aria-label="선택한 날짜의 오프라인 일정 지도"></div>
+              <div class="planner-map-empty" id="plannerMapEmpty" hidden></div>
+            </div>
+            <aside class="planner-upcoming-travel" id="upcomingTravelCard" aria-label="가장 가까운 이동 계획" hidden>
+              <div class="planner-upcoming-travel-heading">
+                <div>
+                  <span>NEXT TRAVEL</span>
+                  <strong id="upcomingTravelTitle"></strong>
+                </div>
+                <time id="upcomingTravelDate"></time>
+              </div>
+              <div class="planner-upcoming-travel-route" id="upcomingTravelRoute"></div>
+              <section class="travel-steps-preview planner-upcoming-travel-steps" id="upcomingTravelSteps"></section>
+            </aside>
+          </div>
         </div>
       </section>
     </section>
@@ -145,6 +160,22 @@
             </div>
           </div>
 
+          <div class="ios-form-group event-kind-group">
+            <div class="field">
+              <span>일정 유형</span>
+              <div class="segmented-control" role="radiogroup" aria-label="일정 유형">
+                <label>
+                  <input type="radio" name="eventKind" value="regular" checked>
+                  <span>일반 일정</span>
+                </label>
+                <label>
+                  <input type="radio" name="eventKind" value="travel">
+                  <span>이동 일정</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
           <div class="ios-form-group ios-date-group">
             <label class="compact-date-field">
               <input id="date" name="date" type="date" aria-label="날짜 (필수)" required>
@@ -161,7 +192,7 @@
             </div>
           </div>
 
-          <div class="ios-form-group ios-settings-group">
+          <div class="ios-form-group ios-settings-group" id="regularEventFields">
             <div class="field location-type-field">
               <span>진행 방식</span>
               <div class="segmented-control" role="radiogroup" aria-label="진행 방식">
@@ -193,6 +224,38 @@
               <span>온라인 링크</span>
               <input id="url" name="url" type="url" placeholder="https://zoom.us/...">
             </label>
+          </div>
+
+          <div class="travel-event-fields" id="travelEventFields" hidden>
+            <div class="ios-form-group ios-settings-group">
+              <div class="field field-wide location-search-field" id="departureLocationField">
+                <div class="location-field-label">
+                  <span>출발 장소</span>
+                  <button class="location-search-button" id="departureLocationSearchButton" type="button">검색</button>
+                </div>
+                <div class="location-search-control">
+                  <input id="departureLocation" name="departureLocation" type="text" placeholder="예: 서울역" autocomplete="off" aria-describedby="departureLocationSearchStatus">
+                  <input class="location-detail-input" id="departureLocationDetail" name="departureLocationDetail" type="text" placeholder="상세 위치" aria-label="출발 상세 위치" autocomplete="off">
+                  <div class="location-search-status" id="departureLocationSearchStatus" aria-live="polite"></div>
+                </div>
+                <div class="location-search-results" id="departureLocationSearchResults" hidden></div>
+              </div>
+            </div>
+
+            <div class="ios-form-group ios-settings-group">
+              <div class="field field-wide location-search-field" id="destinationLocationField">
+                <div class="location-field-label">
+                  <span>도착 장소</span>
+                  <button class="location-search-button" id="destinationLocationSearchButton" type="button">검색</button>
+                </div>
+                <div class="location-search-control">
+                  <input id="destinationLocation" name="destinationLocation" type="text" placeholder="예: 대전역" autocomplete="off" aria-describedby="destinationLocationSearchStatus">
+                  <input class="location-detail-input" id="destinationLocationDetail" name="destinationLocationDetail" type="text" placeholder="상세 위치" aria-label="도착 상세 위치" autocomplete="off">
+                  <div class="location-search-status" id="destinationLocationSearchStatus" aria-live="polite"></div>
+                </div>
+                <div class="location-search-results" id="destinationLocationSearchResults" hidden></div>
+              </div>
+            </div>
           </div>
 
           <div class="reservation-section">
@@ -316,6 +379,62 @@
       <button class="quiet-button danger-button" id="clearButton" type="button">전체 삭제</button>
     </section>
   </main>
+
+  <dialog class="travel-dialog" id="travelDialog">
+    <form method="dialog" class="travel-dialog-shell" id="travelForm">
+      <div class="travel-dialog-header">
+        <div>
+          <span>TRAVEL PLAN</span>
+          <h2 id="travelDialogTitle">출발 시간 확인</h2>
+        </div>
+        <button class="travel-close-button" id="travelCloseButton" type="button" aria-label="닫기">×</button>
+      </div>
+
+      <div class="travel-route-points">
+        <label>
+          <span>출발</span>
+          <select id="travelOriginSelect" aria-label="출발지"></select>
+        </label>
+        <span class="travel-route-arrow" aria-hidden="true">→</span>
+        <div>
+          <span>도착</span>
+          <strong id="travelDestinationLabel"></strong>
+        </div>
+      </div>
+
+      <fieldset class="travel-mode-control">
+        <legend>이동수단</legend>
+        <label><input type="radio" name="travelMode" value="traffic" checked><span>대중교통</span></label>
+        <label><input type="radio" name="travelMode" value="car"><span>자동차</span></label>
+        <label><input type="radio" name="travelMode" value="walk"><span>도보</span></label>
+        <label><input type="radio" name="travelMode" value="bicycle"><span>자전거</span></label>
+      </fieldset>
+
+      <p class="travel-helper" id="travelHelper">네이버지도에서 원하는 경로와 출발 시각을 고른 뒤 가져오세요.</p>
+
+      <section class="travel-steps-preview" id="travelStepsPreview" hidden></section>
+
+      <div class="travel-map-actions">
+        <a id="travelNaverLink">네이버지도 앱에서 확인 ↗</a>
+        <button id="travelManualToggle" type="button" aria-expanded="false">수동 입력</button>
+      </div>
+
+      <section class="travel-manual-panel" id="travelManualPanel" hidden>
+        <label class="travel-manual-duration">
+          <span>예상 소요</span>
+          <span class="travel-number-field"><input id="travelDuration" type="number" min="0" max="1440" inputmode="numeric" placeholder="60"><b>분</b></span>
+        </label>
+        <div class="travel-result-card">
+          <div><span>추천 출발</span><strong id="travelRecommendedDeparture">—</strong></div>
+        </div>
+      </section>
+
+      <div class="travel-dialog-actions">
+        <button class="note-delete-button" id="travelClearButton" type="button">저장값 지우기</button>
+        <button class="note-save-button" id="travelSaveButton" type="button">이 일정에 저장</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
