@@ -3,6 +3,8 @@ const CATEGORY_ORDER_KEY = "serin-schedule-category-order-v1";
 const HOME_LOCATION_KEY = "serin-schedule-home-location-v1";
 const HOME_VISIBLE_KEY = "serin-schedule-home-visible-v1";
 const NOTES_KEY = "serin-schedule-notes-v1";
+const TASKS_KEY = "serin-schedule-tasks-v1";
+const TASK_SETTINGS_KEY = "serin-schedule-task-settings-v1";
 const CLOUD_CALENDAR_KEY = "serin-schedule-cloud-calendar-v1";
 const CLOUD_OWNER_KEY = "serin-schedule-cloud-owner-v1";
 
@@ -33,6 +35,15 @@ const categoryManagerList = document.querySelector("#categoryManagerList");
 const timelineView = document.querySelector("#timelineView");
 const categoriesView = document.querySelector("#categoriesView");
 const tasksView = document.querySelector("#tasksView");
+const taskForm = document.querySelector("#taskForm");
+const taskTitleInput = document.querySelector("#taskTitleInput");
+const taskDueDateInput = document.querySelector("#taskDueDateInput");
+const taskDueTimeInput = document.querySelector("#taskDueTimeInput");
+const taskEventSelect = document.querySelector("#taskEventSelect");
+const taskSubmissionInput = document.querySelector("#taskSubmissionInput");
+const taskMemoInput = document.querySelector("#taskMemoInput");
+const taskArchiveButton = document.querySelector("#taskArchiveButton");
+const taskDeleteButton = document.querySelector("#taskDeleteButton");
 const notesView = document.querySelector("#notesView");
 const notesList = document.querySelector("#notesList");
 const newNoteButton = document.querySelector("#newNoteButton");
@@ -115,6 +126,13 @@ const syncNowButton = document.querySelector("#syncNowButton");
 const syncAccountCard = document.querySelector("#syncAccountCard");
 
 let events = loadEvents();
+let tasks = loadTasks(events);
+if (events.some((event) => event.todos?.length)) {
+  events = events.map((event) => ({ ...event, todos: [] }));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
+  localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+}
+let taskSettings = loadTaskSettings();
 let categoryOrder = loadCategoryOrder();
 let notes = loadNotes();
 let selectedCategories = new Set(events.map((event) => normalizedCategory(event.category || "ETC")));
@@ -151,6 +169,13 @@ let applyingCloudState = false;
 let cloudSyncInFlight = null;
 let cloudSyncQueued = false;
 let demoMode = false;
+let taskViewMode = "active";
+let selectedTaskId = null;
+let archiveTaskQuery = "";
+let archiveTaskStartDate = "";
+let archiveTaskEndDate = "";
+let archiveTaskStatus = "all";
+let archiveTaskDateBasis = "any";
 
 function loadEvents() {
   try {
@@ -165,6 +190,81 @@ function loadEvents() {
 function saveEvents() {
   if (demoMode) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
+  queueCloudSync();
+}
+
+function normalizeTask(task = {}) {
+  const now = new Date().toISOString();
+  const completed = Boolean(task.completed);
+  return {
+    id: task.id || crypto.randomUUID(),
+    title: String(task.title || ""),
+    dueDate: String(task.dueDate || ""),
+    dueTime: String(task.dueTime || "").slice(0, 5),
+    submissionRequired: Boolean(task.submissionRequired),
+    completed,
+    completedAt: completed ? String(task.completedAt || task.updatedAt || task.createdAt || now) : "",
+    archivedAt: String(task.archivedAt || ""),
+    memo: String(task.memo || ""),
+    eventId: String(task.eventId || ""),
+    createdAt: String(task.createdAt || now),
+    updatedAt: String(task.updatedAt || task.createdAt || now)
+  };
+}
+
+function tasksFromEventTodos(sourceEvents = []) {
+  return sourceEvents.flatMap((event) => (Array.isArray(event.todos) ? event.todos : []).map((todo) => normalizeTask({
+    ...todo,
+    eventId: event.id,
+    createdAt: todo.createdAt || event.createdAt,
+    updatedAt: todo.updatedAt || event.updatedAt || event.createdAt
+  })));
+}
+
+function mergeTaskLists(...lists) {
+  const merged = new Map();
+  lists.flat().forEach((rawTask) => {
+    const task = normalizeTask(rawTask);
+    const existing = merged.get(task.id);
+    if (!existing || String(task.updatedAt) >= String(existing.updatedAt)) merged.set(task.id, task);
+  });
+  return [...merged.values()];
+}
+
+function loadTasks(sourceEvents = []) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TASKS_KEY) || "[]");
+    return mergeTaskLists(tasksFromEventTodos(sourceEvents), Array.isArray(saved) ? saved : []);
+  } catch (error) {
+    console.error("저장된 할 일을 불러오지 못했습니다.", error);
+    return tasksFromEventTodos(sourceEvents);
+  }
+}
+
+function saveTasks() {
+  if (demoMode) return;
+  localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+  queueCloudSync();
+}
+
+function normalizeTaskSettings(settings = {}) {
+  const recent = Number(settings.recentCompletedDays);
+  return {
+    recentCompletedDays: Number.isFinite(recent) && recent >= -1 ? Math.round(recent) : 7
+  };
+}
+
+function loadTaskSettings() {
+  try {
+    return normalizeTaskSettings(JSON.parse(localStorage.getItem(TASK_SETTINGS_KEY) || "{}"));
+  } catch (error) {
+    return normalizeTaskSettings();
+  }
+}
+
+function saveTaskSettings() {
+  if (demoMode) return;
+  localStorage.setItem(TASK_SETTINGS_KEY, JSON.stringify(taskSettings));
   queueCloudSync();
 }
 
@@ -285,8 +385,10 @@ function saveHomeSettings() {
 
 function plannerState() {
   return {
-    version: 8,
+    version: 9,
     events,
+    tasks,
+    taskSettings,
     categoryOrder,
     notes,
     homeLocation,
@@ -656,6 +758,8 @@ function activateDemoMode() {
   const today = new Date();
   demoMode = true;
   events = demoEvents();
+  tasks = tasksFromEventTodos(events);
+  taskSettings = normalizeTaskSettings({ recentCompletedDays: 7 });
   categoryOrder = ["WORK", "SOCIAL", "ERRAND", "LIFE", "HEALTH", "STUDY", "TRAVEL"];
   notes = [];
   homeLocation = {
@@ -682,6 +786,13 @@ function restorePrivateLocalState() {
   if (!demoMode) return;
   demoMode = false;
   events = loadEvents();
+  tasks = loadTasks(events);
+  if (events.some((event) => event.todos?.length)) {
+    events = events.map((event) => ({ ...event, todos: [] }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
+    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+  }
+  taskSettings = loadTaskSettings();
   categoryOrder = loadCategoryOrder();
   notes = loadNotes();
   homeLocation = loadHomeLocation();
@@ -722,6 +833,7 @@ function updateAuthView() {
 
 function storePlannerState(state) {
   const incomingEvents = Array.isArray(state?.events) ? state.events : [];
+  const incomingTasks = Array.isArray(state?.tasks) ? state.tasks : [];
   const incomingCategoryOrder = Array.isArray(state?.categoryOrder) ? state.categoryOrder : [];
   const incomingHome = state?.homeLocation;
   const incomingNotes = Array.isArray(state?.notes) ? state.notes : [];
@@ -732,6 +844,9 @@ function storePlannerState(state) {
     id: event.id || crypto.randomUUID(),
     category: normalizedCategory(event.category || "ETC")
   }));
+  tasks = mergeTaskLists(tasksFromEventTodos(events), incomingTasks);
+  events = events.map((event) => ({ ...event, todos: [] }));
+  taskSettings = normalizeTaskSettings(state?.taskSettings);
   categoryOrder = incomingCategoryOrder.map(normalizedCategory);
   notes = incomingNotes.map(normalizeNote);
   homeLocation = incomingHome && Number.isFinite(Number(incomingHome.latitude)) && Number.isFinite(Number(incomingHome.longitude))
@@ -747,6 +862,8 @@ function storePlannerState(state) {
   if (!notes.some((note) => note.id === selectedNoteId)) selectedNoteId = null;
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
+  localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+  localStorage.setItem(TASK_SETTINGS_KEY, JSON.stringify(taskSettings));
   localStorage.setItem(CATEGORY_ORDER_KEY, JSON.stringify(categoryOrder));
   localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
   if (homeLocation) {
@@ -776,9 +893,17 @@ function mergedPlannerState(localState, cloudState) {
     const existing = mergedNotes.get(note.id);
     if (!existing || String(note.updatedAt) >= String(existing.updatedAt)) mergedNotes.set(note.id, note);
   });
+  const mergedTasks = mergeTaskLists(
+    tasksFromEventTodos(Array.isArray(localState?.events) ? localState.events : []),
+    tasksFromEventTodos(Array.isArray(cloudState?.events) ? cloudState.events : []),
+    Array.isArray(localState?.tasks) ? localState.tasks : [],
+    Array.isArray(cloudState?.tasks) ? cloudState.tasks : []
+  );
   return {
-    version: 8,
-    events: [...mergedEvents.values()],
+    version: 9,
+    events: [...mergedEvents.values()].map((event) => ({ ...event, todos: [] })),
+    tasks: mergedTasks,
+    taskSettings: normalizeTaskSettings(cloudState?.taskSettings || localState?.taskSettings),
     categoryOrder: [...new Set([...cloudCategories, ...localCategories])],
     notes: [...mergedNotes.values()],
     homeLocation: cloudState?.homeLocation || localState?.homeLocation || null,
@@ -1907,6 +2032,10 @@ function addTodoInput(todo = {}, focusTitle = false) {
   const item = element("div", "todo-input-item");
   item.dataset.todoId = todo.id || crypto.randomUUID();
   item.dataset.completed = String(Boolean(todo.completed));
+  item.dataset.completedAt = todo.completedAt || "";
+  item.dataset.archivedAt = todo.archivedAt || "";
+  item.dataset.memo = todo.memo || "";
+  item.dataset.createdAt = todo.createdAt || "";
 
   const titleRow = element("div", "todo-title-row");
   const titleField = element("label", "todo-title-field");
@@ -1986,10 +2115,41 @@ function collectTodoInputs() {
       dueDate,
       dueTime,
       submissionRequired: item.querySelector(".todo-submission-required").checked,
-      completed: item.dataset.completed === "true"
+      completed: item.dataset.completed === "true",
+      completedAt: item.dataset.completedAt || "",
+      archivedAt: item.dataset.archivedAt || "",
+      memo: item.dataset.memo || "",
+      createdAt: item.dataset.createdAt || ""
     });
   }
   return { todos };
+}
+
+function eventTasks(eventId) {
+  return tasks.filter((task) => task.eventId === eventId && !isArchivedTask(task));
+}
+
+function syncEventTasks(eventId, formTodos) {
+  const now = new Date().toISOString();
+  const incomingIds = new Set(formTodos.map((todo) => todo.id));
+  tasks = tasks.filter((task) => task.eventId !== eventId || isArchivedTask(task) || incomingIds.has(task.id));
+  formTodos.forEach((todo) => {
+    const existing = tasks.find((task) => task.id === todo.id);
+    const completedAt = todo.completed
+      ? todo.completedAt || existing?.completedAt || now
+      : "";
+    const next = normalizeTask({
+      ...existing,
+      ...todo,
+      eventId,
+      completedAt,
+      createdAt: todo.createdAt || existing?.createdAt || now,
+      updatedAt: now
+    });
+    tasks = existing
+      ? tasks.map((task) => task.id === next.id ? next : task)
+      : [...tasks, next];
+  });
 }
 
 function emptyState(title, description) {
@@ -2183,7 +2343,7 @@ function submissionTimelineCard(event, todo, { dimmed = false } = {}) {
     "details",
     `compact-event submission-deadline-event${dimmed ? " is-dimmed" : ""}${elapsed ? " is-elapsed" : ""}`
   );
-  card.dataset.linkedEventId = event.id;
+  if (event) card.dataset.linkedEventId = event.id;
   const summary = element("summary", "compact-event-summary");
   const primary = element("span", "compact-event-primary submission-event-primary");
   const time = element(
@@ -2198,11 +2358,11 @@ function submissionTimelineCard(event, todo, { dimmed = false } = {}) {
       `submission-event-title${todo.completed ? " is-completed" : ""}`,
       `${todo.completed ? "✓ 제출 완료" : "! 제출 필요"} • ${deadlineDayLabel(todo.dueDate)}`
     ),
-    element("span", "compact-event-subline", `${todo.title} · ${event.title}`)
+    element("span", "compact-event-subline", [todo.title, event?.title].filter(Boolean).join(" · "))
   );
   primary.append(time, element("span", "compact-event-divider", "—"), copy);
   const meta = element("span", "compact-event-meta");
-  meta.append(element("span", "category-pill", event.category));
+  if (event) meta.append(element("span", "category-pill", event.category));
   summary.append(primary, meta);
   card.append(summary);
 
@@ -2218,24 +2378,28 @@ function submissionTimelineCard(event, todo, { dimmed = false } = {}) {
   const linkedEventInfo = element("div", "event-info-item");
   linkedEventInfo.append(
     element("span", "", "연결 일정"),
-    element("strong", "linked-event-title", event.title)
+    element("strong", "linked-event-title", event?.title || "연결 안 함")
   );
   info.append(deadlineInfo, linkedEventInfo);
   expanded.append(info);
 
   const actions = element("div", "event-actions");
-  const detailButton = element("button", "detail-button", "연결 일정 보기");
+  const detailButton = element("button", "detail-button", event ? "연결 일정 보기" : "할 일 보기");
   detailButton.type = "button";
   detailButton.addEventListener("click", () => {
-    showEventInForm(event.id, "view");
-    formCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (event) {
+      showEventInForm(event.id, "view");
+      formCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      openTaskPanel(todo.id);
+    }
   });
   actions.append(detailButton);
   expanded.append(actions);
   card.append(expanded);
 
   card.addEventListener("toggle", () => {
-    if (card.open) {
+    if (card.open && event) {
       selectedEventId = event.id;
       card.closest(".view-panel")?.querySelectorAll(".compact-event[open]").forEach((openCard) => {
         if (openCard !== card) openCard.open = false;
@@ -2253,12 +2417,12 @@ function renderTimeline() {
   const timelineEntries = [];
   events.forEach((event) => {
     timelineEntries.push({ kind: "event", date: event.date, time: event.startTime || "", event });
-    event.todos
-      .filter((todo) => todo.submissionRequired && todo.dueDate)
-      .forEach((todo) => {
-        timelineEntries.push({ kind: "submission", date: todo.dueDate, time: todo.dueTime || "", event, todo });
-      });
   });
+  tasks
+    .filter((todo) => todo.submissionRequired && todo.dueDate && !isArchivedTask(todo))
+    .forEach((todo) => {
+      timelineEntries.push({ kind: "submission", date: todo.dueDate, time: todo.dueTime || "", event: taskLinkedEvent(todo), todo });
+    });
 
   const sorted = timelineEntries.filter((entry) => dateMatchesTimelineFilter(entry.date)).sort((a, b) => {
     const dateComparison = a.date.localeCompare(b.date);
@@ -2535,7 +2699,7 @@ function reservationTaskItem(event) {
     "div",
     `task-item${isEventElapsed(event) ? " is-elapsed" : ""}`
   );
-  const label = element("label", "task-check");
+  const label = element("div", "task-check");
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.checked = false;
@@ -2554,21 +2718,59 @@ function reservationTaskItem(event) {
   return item;
 }
 
-function todoTaskItem(event, todo) {
-  const item = element("div", `task-item${todo.completed ? " is-done" : ""}`);
-  const label = element("label", "task-check");
+function taskLinkedEvent(task) {
+  return events.find((event) => event.id === task.eventId) || null;
+}
+
+function taskRelevantDates(task) {
+  const linked = taskLinkedEvent(task);
+  return [...new Set([task.dueDate, linked?.date].filter(Boolean))];
+}
+
+function taskMatchesCalendar(task) {
+  const dates = taskRelevantDates(task);
+  if (!hasExplicitDateFilter) return true;
+  return dates.some((date) => dateMatchesActiveFilter(date));
+}
+
+function taskCompletedAt(task) {
+  return task.completedAt ? new Date(task.completedAt) : null;
+}
+
+function isRecentlyCompletedTask(task) {
+  if (!task.completed || task.archivedAt) return false;
+  const days = taskSettings.recentCompletedDays;
+  if (days === -1) return true;
+  if (days === 0) return false;
+  const completedAt = taskCompletedAt(task);
+  if (!completedAt || Number.isNaN(completedAt.getTime())) return false;
+  return Date.now() - completedAt.getTime() < days * 24 * 60 * 60 * 1000;
+}
+
+function isArchivedTask(task) {
+  return Boolean(task.archivedAt) || (task.completed && !isRecentlyCompletedTask(task));
+}
+
+function taskSortValue(task) {
+  return `${task.dueDate || "9999-12-31"}T${task.dueTime || "23:59"}-${task.createdAt}`;
+}
+
+function todoTaskItem(todo, options = {}) {
+  const event = taskLinkedEvent(todo);
+  const item = element("div", `task-item task-record${todo.completed ? " is-done" : ""}`);
+  const label = element("div", "task-check");
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.checked = todo.completed;
   checkbox.setAttribute("aria-label", `${todo.title} 완료`);
-  checkbox.addEventListener("change", () => updateTodoTask(event.id, todo.id, checkbox.checked));
+  checkbox.addEventListener("change", () => updateTodoTask(todo.id, checkbox.checked));
 
   const copy = element("span", "task-copy");
   const deadline = todo.dueDate
     ? formatDeadline(`${todo.dueDate}${todo.dueTime ? `T${todo.dueTime}` : ""}`)
     : "기한 없음";
   const todoScheduleLine = element("span");
-  todoScheduleLine.append(document.createTextNode(`${event.title} · `));
+  if (event) todoScheduleLine.append(document.createTextNode(`${event.title} · `));
   if (todo.dueDate) {
     todoScheduleLine.append(
       viewDate(todo.dueDate),
@@ -2584,9 +2786,14 @@ function todoTaskItem(event, todo) {
   label.append(checkbox, copy);
 
   const pills = element("span", "task-pills");
-  if (todo.submissionRequired) pills.append(element("span", "submission-pill", "제출"));
-  pills.append(element("span", "category-pill", event.category));
+  if (todo.submissionRequired) pills.append(element("span", "submission-pill", "제출 필요"));
+  if (event) pills.append(element("span", "category-pill", event.category));
+  if (options.archived) pills.append(element("span", "task-archive-pill", todo.archivedAt ? "보관" : "완료"));
   item.append(label, pills);
+  item.addEventListener("click", (clickEvent) => {
+    if (clickEvent.target === checkbox) return;
+    openTaskPanel(todo.id);
+  });
   return item;
 }
 
@@ -2618,44 +2825,178 @@ function renderTasks() {
   const cancellationTasks = [...visibleEvents]
     .filter((event) => inferredReservationStatus(event) === "considering")
     .sort((a, b) => cancellationDeadlineSortValue(a).localeCompare(cancellationDeadlineSortValue(b)));
-  const todoTasks = visibleEvents.flatMap((event) => event.todos.map((todo) => ({ event, todo })))
-    .sort((a, b) => {
-      const aValue = `${a.todo.dueDate || "9999-12-31"}T${a.todo.dueTime || "23:59"}`;
-      const bValue = `${b.todo.dueDate || "9999-12-31"}T${b.todo.dueTime || "23:59"}`;
-      return aValue.localeCompare(bValue);
+  const switcher = element("div", "task-view-switch");
+  [["active", "진행 중"], ["archive", "보관됨"]].forEach(([value, labelText]) => {
+    const button = element("button", value === taskViewMode ? "is-active" : "", labelText);
+    button.type = "button";
+    button.addEventListener("click", () => {
+      taskViewMode = value;
+      renderTasks();
     });
+    switcher.append(button);
+  });
+  tasksView.append(switcher);
 
-  if (!reservationTasks.length && !cancellationTasks.length && !todoTasks.length) {
-    tasksView.append(emptyState("아직 할 일이 없어요", "일정에 To Do를 추가하면 여기에 모두 모아 보여줍니다."));
+  if (taskViewMode === "archive") {
+    renderTaskArchive();
     return;
   }
 
-  if (cancellationTasks.length) {
-    const section = element("section", "task-section cancellation-task-section");
-    section.append(element("h2", "", "취소 결정"));
+  const activeTasks = tasks.filter((task) => !task.completed && !task.archivedAt && taskMatchesCalendar(task)).sort((a, b) => taskSortValue(a).localeCompare(taskSortValue(b)));
+  const recentTasks = tasks.filter((task) => isRecentlyCompletedTask(task) && taskMatchesCalendar(task)).sort((a, b) => String(b.completedAt).localeCompare(String(a.completedAt)));
+
+  {
+    const section = element("section", "task-section");
+    const title = element("div", "task-section-heading task-main-heading");
+    const newButton = element("button", "task-add-circle", "+");
+    newButton.type = "button";
+    newButton.setAttribute("aria-label", "새 할 일 추가");
+    newButton.addEventListener("click", () => openTaskPanel());
+    title.append(element("h2", "", "To Do"), newButton);
+    section.append(title);
     const list = element("div", "task-list");
-    cancellationTasks.forEach((event) => list.append(cancellationTaskItem(event)));
-    section.append(list);
+    activeTasks.forEach((task) => list.append(todoTaskItem(task)));
+    if (activeTasks.length) {
+      section.append(list);
+    } else {
+      section.append(emptyState("진행 중인 할 일이 없어요", "오른쪽의 +를 눌러 새 할 일을 추가해보세요."));
+    }
     tasksView.append(section);
   }
 
+  if (recentTasks.length) {
+    const section = element("section", "task-section recent-task-section");
+    const title = element("div", "task-section-heading");
+    title.append(element("h2", "", "최근 완료"), recentCompletedSetting());
+    section.append(title);
+    const list = element("div", "task-list");
+    recentTasks.forEach((task) => list.append(todoTaskItem(task)));
+    section.append(list);
+    tasksView.append(section);
+  } else {
+    tasksView.append(recentCompletedSetting(true));
+  }
+
   if (reservationTasks.length) {
-    const section = element("section", "task-section");
-    section.append(element("h2", "", "예약"));
+    const section = element("section", "task-section cancellation-task-section");
+    section.append(element("h2", "", "예약 필요"));
     const list = element("div", "task-list");
     reservationTasks.forEach((event) => list.append(reservationTaskItem(event)));
     section.append(list);
     tasksView.append(section);
   }
 
-  if (todoTasks.length) {
+  if (cancellationTasks.length) {
     const section = element("section", "task-section");
-    section.append(element("h2", "", "To Do"));
+    section.append(element("h2", "", "취소 고려"));
     const list = element("div", "task-list");
-    todoTasks.forEach(({ event, todo }) => list.append(todoTaskItem(event, todo)));
+    cancellationTasks.forEach((event) => list.append(cancellationTaskItem(event)));
     section.append(list);
     tasksView.append(section);
   }
+}
+
+function recentCompletedSetting(compact = false) {
+  const control = element("label", `recent-completed-setting${compact ? " is-standalone" : ""}`);
+  control.append(element("span", "", "완료 항목 표시"));
+  const select = document.createElement("select");
+  const choices = [[0, "표시 안 함"], [3, "3일"], [7, "7일"], [14, "14일"], [30, "30일"], [-1, "계속"]];
+  const known = choices.some(([value]) => value === taskSettings.recentCompletedDays);
+  [...choices, ...(known ? [] : [[taskSettings.recentCompletedDays, `${taskSettings.recentCompletedDays}일`]])].forEach(([value, labelText]) => {
+    const option = document.createElement("option");
+    option.value = String(value);
+    option.textContent = labelText;
+    option.selected = value === taskSettings.recentCompletedDays;
+    select.append(option);
+  });
+  const custom = document.createElement("option");
+  custom.value = "custom";
+  custom.textContent = "직접 설정…";
+  select.append(custom);
+  select.addEventListener("change", () => {
+    if (select.value === "custom") {
+      const requested = window.prompt("최근 완료 항목을 며칠 동안 보여줄까요?", "7");
+      const days = Number(requested);
+      if (!Number.isFinite(days) || days < 0) return renderTasks();
+      taskSettings.recentCompletedDays = Math.round(days);
+    } else {
+      taskSettings.recentCompletedDays = Number(select.value);
+    }
+    saveTaskSettings();
+    renderTasks();
+  });
+  control.append(select);
+  return control;
+}
+
+function archivedTaskDate(task, basis) {
+  const event = taskLinkedEvent(task);
+  if (basis === "due") return task.dueDate || "";
+  if (basis === "completed") return task.completedAt ? dateInputValue(new Date(task.completedAt)) : "";
+  if (basis === "archived") return task.archivedAt ? dateInputValue(new Date(task.archivedAt)) : "";
+  if (basis === "event") return event?.date || "";
+  return "";
+}
+
+function renderTaskArchive() {
+  const filters = element("div", "task-archive-filters");
+  const query = document.createElement("input");
+  query.className = "task-archive-query";
+  query.type = "search";
+  query.placeholder = "할 일·메모·연결 일정 검색";
+  query.value = archiveTaskQuery;
+  const basis = document.createElement("select");
+  [["any", "모든 날짜"], ["due", "완료 기한"], ["completed", "완료일"], ["archived", "보관일"], ["event", "일정일"]].forEach(([value, labelText]) => {
+    const option = document.createElement("option"); option.value = value; option.textContent = labelText; option.selected = archiveTaskDateBasis === value; basis.append(option);
+  });
+  const start = document.createElement("input"); start.type = "date"; start.value = archiveTaskStartDate; start.setAttribute("aria-label", "검색 시작 날짜");
+  const end = document.createElement("input"); end.type = "date"; end.value = archiveTaskEndDate; end.setAttribute("aria-label", "검색 끝 날짜");
+  const status = document.createElement("select");
+  [["all", "모든 상태"], ["completed", "완료"], ["open", "미완료"]].forEach(([value, labelText]) => {
+    const option = document.createElement("option"); option.value = value; option.textContent = labelText; option.selected = archiveTaskStatus === value; status.append(option);
+  });
+  const reset = element("button", "task-filter-reset", "초기화"); reset.type = "button";
+  filters.append(query, basis, start, element("span", "task-date-separator", "–"), end, status, reset);
+  tasksView.append(filters);
+
+  const refresh = () => {
+    archiveTaskQuery = query.value.trim(); archiveTaskDateBasis = basis.value; archiveTaskStartDate = start.value; archiveTaskEndDate = end.value; archiveTaskStatus = status.value; renderTasks();
+  };
+  query.addEventListener("input", () => {
+    archiveTaskQuery = query.value.trim();
+    const cursor = query.selectionStart;
+    renderTasks();
+    const replacement = tasksView.querySelector(".task-archive-query");
+    replacement?.focus();
+    replacement?.setSelectionRange(cursor, cursor);
+  });
+  [basis, start, end, status].forEach((input) => input.addEventListener("change", refresh));
+  reset.addEventListener("click", () => {
+    archiveTaskQuery = ""; archiveTaskDateBasis = "any"; archiveTaskStartDate = ""; archiveTaskEndDate = ""; archiveTaskStatus = "all"; renderTasks();
+  });
+
+  const needle = archiveTaskQuery.toLocaleLowerCase("ko-KR");
+  const archived = tasks.filter(isArchivedTask).filter((task) => {
+    const event = taskLinkedEvent(task);
+    if (needle && ![task.title, task.memo, event?.title].filter(Boolean).join(" ").toLocaleLowerCase("ko-KR").includes(needle)) return false;
+    if (archiveTaskStatus === "completed" && !task.completed) return false;
+    if (archiveTaskStatus === "open" && task.completed) return false;
+    if (archiveTaskStartDate || archiveTaskEndDate) {
+      const dates = archiveTaskDateBasis === "any"
+        ? ["due", "completed", "archived", "event"].map((value) => archivedTaskDate(task, value)).filter(Boolean)
+        : [archivedTaskDate(task, archiveTaskDateBasis)].filter(Boolean);
+      if (!dates.some((date) => (!archiveTaskStartDate || date >= archiveTaskStartDate) && (!archiveTaskEndDate || date <= archiveTaskEndDate))) return false;
+    }
+    return true;
+  }).sort((a, b) => String(b.archivedAt || b.completedAt).localeCompare(String(a.archivedAt || a.completedAt)));
+
+  if (!archived.length) {
+    tasksView.append(emptyState("조건에 맞는 보관 항목이 없어요", "완료된 지 오래된 항목이나 직접 보관한 항목이 여기에 모입니다."));
+    return;
+  }
+  const list = element("div", "task-list task-archive-list");
+  archived.forEach((task) => list.append(todoTaskItem(task, { archived: true })));
+  tasksView.append(list);
 }
 
 function noteTimestamp(value) {
@@ -3041,21 +3382,25 @@ function applyFormMode(mode) {
   const isIdle = mode === "idle";
   const isViewing = mode === "view";
   const isCreating = mode === "create";
+  const isTask = mode === "task";
 
-  form.hidden = isIdle;
+  form.hidden = isIdle || isTask;
+  taskForm.hidden = !isTask;
   formPlaceholder.hidden = !isIdle;
   form.classList.toggle("is-viewing", isViewing);
   saveButton.hidden = isIdle || isViewing;
-  newEventButton.hidden = isCreating || mode === "edit";
+  newEventButton.hidden = isCreating || mode === "edit" || isTask;
   cancelEditButton.hidden = isIdle || isViewing;
+  cancelEditButton.textContent = isTask ? "닫기" : "취소";
 
-  formKicker.textContent = isCreating ? "NEW EVENT" : isViewing ? "SELECTED EVENT" : mode === "edit" ? "EDIT EVENT" : "EVENT";
-  formTitle.textContent = isCreating ? "일정 추가" : isViewing ? "일정 보기" : mode === "edit" ? "일정 수정" : "일정 보기";
+  formKicker.textContent = isTask ? (selectedTaskId ? "SELECTED TASK" : "NEW TASK") : isCreating ? "NEW EVENT" : isViewing ? "SELECTED EVENT" : mode === "edit" ? "EDIT EVENT" : "EVENT";
+  formTitle.textContent = isTask ? (selectedTaskId ? "할 일 보기" : "할 일 추가") : isCreating ? "일정 추가" : isViewing ? "일정 보기" : mode === "edit" ? "일정 수정" : "일정 보기";
   saveButton.textContent = isCreating ? "일정 저장" : "변경 저장";
 }
 
 function showIdleForm() {
   selectedEventId = null;
+  selectedTaskId = null;
   clearFormValues();
   applyFormMode("idle");
 }
@@ -3063,6 +3408,7 @@ function showIdleForm() {
 function startNewEvent() {
   if (!requireSignIn("로그인하면 새 일정을 추가할 수 있어요.")) return;
   selectedEventId = null;
+  selectedTaskId = null;
   clearFormValues();
   applyFormMode("create");
   renderAll();
@@ -3073,6 +3419,7 @@ function showEventInForm(id, mode = "view") {
   const event = events.find((item) => item.id === id);
   if (!event) return;
 
+  selectedTaskId = null;
   selectedEventId = event.id;
   document.querySelector("#eventId").value = event.id;
   document.querySelector("#title").value = event.title;
@@ -3126,7 +3473,7 @@ function showEventInForm(id, mode = "view") {
   document.querySelector("#cancellationDeadlineDate").value = cancellationDeadline.date;
   document.querySelector("#cancellationDeadlineTime").value = cancellationDeadline.time;
   document.querySelector("#cancellationNotes").value = event.cancellationNotes || "";
-  renderTodoInputs(event.todos);
+  renderTodoInputs(eventTasks(event.id));
 
   syncLocationFields();
   syncConditionalFields();
@@ -3145,6 +3492,10 @@ function activateEventEditing(target) {
 }
 
 function cancelFormEditing() {
+  if (formMode === "task") {
+    showIdleForm();
+    return;
+  }
   if (selectedEventId && events.some((event) => event.id === selectedEventId)) {
     showEventInForm(selectedEventId, "view");
   } else {
@@ -3157,25 +3508,63 @@ function deleteEvent(id) {
   const event = events.find((item) => item.id === id);
   if (!event || !window.confirm(`“${event.title}” 일정을 삭제할까요?`)) return;
   events = events.filter((item) => item.id !== id);
+  const now = new Date().toISOString();
+  tasks = tasks.map((task) => task.eventId === id ? { ...task, eventId: "", updatedAt: now } : task);
   if (selectedEventId === id) showIdleForm();
   saveEvents();
+  saveTasks();
   renderAll();
 }
 
-function updateTodoTask(eventId, todoId, completed) {
+function populateTaskEventOptions(selectedId = "") {
+  taskEventSelect.replaceChildren();
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "연결 안 함";
+  taskEventSelect.append(none);
+  sortEvents(events).forEach((event) => {
+    const option = document.createElement("option");
+    option.value = event.id;
+    option.textContent = `${compactDate(event.date)} · ${event.title}`;
+    taskEventSelect.append(option);
+  });
+  taskEventSelect.value = selectedId;
+}
+
+function openTaskPanel(id = null) {
+  if (!requireSignIn("로그인하면 할 일을 추가하거나 변경할 수 있어요.")) return;
+  const task = id ? tasks.find((item) => item.id === id) : null;
+  selectedEventId = null;
+  selectedTaskId = task?.id || null;
+  taskTitleInput.value = task?.title || "";
+  taskDueDateInput.value = task?.dueDate || "";
+  taskDueTimeInput.value = task?.dueTime || "";
+  taskSubmissionInput.checked = Boolean(task?.submissionRequired);
+  taskMemoInput.value = task?.memo || "";
+  populateTaskEventOptions(task?.eventId || "");
+  taskArchiveButton.hidden = !task;
+  taskDeleteButton.hidden = !task;
+  taskArchiveButton.textContent = task && isArchivedTask(task) ? "보관 해제" : "보관";
+  applyFormMode("task");
+  formCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!task) taskTitleInput.focus();
+}
+
+function updateTodoTask(todoId, completed) {
   if (!requireSignIn("로그인하면 할 일 상태를 변경할 수 있어요.")) {
     renderAll();
     return;
   }
-  events = events.map((event) => event.id === eventId
-    ? {
-        ...event,
-        todos: event.todos.map((todo) => todo.id === todoId ? { ...todo, completed } : todo)
-      }
-    : event);
-  saveEvents();
+  const now = new Date().toISOString();
+  tasks = tasks.map((task) => task.id === todoId ? {
+    ...task,
+    completed,
+    completedAt: completed ? now : "",
+    updatedAt: now
+  } : task);
+  saveTasks();
   renderAll();
-  if (selectedEventId === eventId && formMode === "view") showEventInForm(eventId, "view");
+  if (selectedEventId && formMode === "view") showEventInForm(selectedEventId, "view");
 }
 
 function updateReservationTask(id, completed) {
@@ -3307,7 +3696,7 @@ form.addEventListener("submit", (submitEvent) => {
     cancellationNotes: reservationStatus === "considering"
       ? document.querySelector("#cancellationNotes").value.trim()
       : "",
-    todos: todoResult.todos,
+    todos: [],
     travelPlan: existingEvent?.travelPlan || null,
     createdAt: id
       ? existingEvent?.createdAt || new Date().toISOString()
@@ -3325,7 +3714,9 @@ form.addEventListener("submit", (submitEvent) => {
     events.push(event);
   }
 
+  syncEventTasks(event.id, todoResult.todos);
   saveEvents();
+  saveTasks();
   selectedEventId = event.id;
   selectedMapDate = event.date;
   calendarCursor = new Date(`${event.date}T00:00:00`);
@@ -3540,6 +3931,67 @@ deleteNoteButton.addEventListener("click", () => {
   renderNotes();
 });
 
+taskForm.addEventListener("submit", (submitEvent) => {
+  submitEvent.preventDefault();
+  if (!requireSignIn("로그인하면 할 일을 저장할 수 있어요.")) return;
+  const title = taskTitleInput.value.trim();
+  if (!title) return taskTitleInput.focus();
+  const dueTime = normalizeTime(taskDueTimeInput.value);
+  if (dueTime === null) {
+    window.alert("완료 시간은 24시간제로 입력해주세요. 예: 09:00, 16:30");
+    return taskDueTimeInput.focus();
+  }
+  if (dueTime && !taskDueDateInput.value) {
+    window.alert("완료 시간을 입력하려면 날짜도 선택해주세요.");
+    return;
+  }
+  const now = new Date().toISOString();
+  const existing = selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) : null;
+  const task = normalizeTask({
+    ...existing,
+    id: existing?.id || crypto.randomUUID(),
+    title,
+    dueDate: taskDueDateInput.value,
+    dueTime,
+    eventId: taskEventSelect.value,
+    submissionRequired: taskSubmissionInput.checked,
+    memo: taskMemoInput.value.trim(),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  });
+  tasks = existing ? tasks.map((item) => item.id === task.id ? task : item) : [...tasks, task];
+  saveTasks();
+  renderAll();
+  openTaskPanel(task.id);
+});
+taskDueTimeInput.addEventListener("blur", () => {
+  const normalized = normalizeTime(taskDueTimeInput.value);
+  if (normalized !== null) taskDueTimeInput.value = normalized;
+});
+taskArchiveButton.addEventListener("click", () => {
+  const task = tasks.find((item) => item.id === selectedTaskId);
+  if (!task) return;
+  const now = new Date().toISOString();
+  const archived = isArchivedTask(task);
+  tasks = tasks.map((item) => item.id === task.id ? {
+    ...item,
+    archivedAt: archived ? "" : now,
+    completedAt: archived && item.completed ? now : item.completedAt,
+    updatedAt: now
+  } : item);
+  saveTasks();
+  showIdleForm();
+  renderAll();
+});
+taskDeleteButton.addEventListener("click", () => {
+  const task = tasks.find((item) => item.id === selectedTaskId);
+  if (!task || !window.confirm(`“${task.title}” 할 일을 삭제할까요?`)) return;
+  tasks = tasks.filter((item) => item.id !== task.id);
+  saveTasks();
+  showIdleForm();
+  renderAll();
+});
+
 travelForm.addEventListener("submit", (submitEvent) => submitEvent.preventDefault());
 travelCloseButton.addEventListener("click", () => travelDialog.close());
 travelDialog.addEventListener("click", (clickEvent) => {
@@ -3686,13 +4138,15 @@ calendarFilterResetButton.addEventListener("click", resetCalendarDateFilter);
 
 clearButton.addEventListener("click", () => {
   if (!requireSignIn("로그인하면 내 데이터를 관리할 수 있어요.")) return;
-  if ((!events.length && !notes.length) || !window.confirm("저장된 일정과 노트를 모두 삭제할까요? 이 작업은 되돌릴 수 없어요.")) return;
+  if ((!events.length && !notes.length && !tasks.length) || !window.confirm("저장된 일정, 할 일과 노트를 모두 삭제할까요? 이 작업은 되돌릴 수 없어요.")) return;
   events = [];
+  tasks = [];
   notes = [];
   categoryOrder = [];
   selectedCategories.clear();
   selectedNoteId = null;
   saveEvents();
+  saveTasks();
   saveNotes();
   saveCategoryOrder();
   showIdleForm();
@@ -3701,7 +4155,7 @@ clearButton.addEventListener("click", () => {
 
 exportButton.addEventListener("click", () => {
   if (!requireSignIn("로그인하면 내 데이터를 백업할 수 있어요.")) return;
-  const backup = { version: 8, events, categoryOrder, notes, homeLocation, homeVisible };
+  const backup = { version: 9, events, tasks, taskSettings, categoryOrder, notes, homeLocation, homeVisible };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -3734,11 +4188,16 @@ importInput.addEventListener("change", async () => {
       id: event.id || crypto.randomUUID(),
       category: normalizedCategory(event.category || "ETC")
     }));
+    tasks = mergeTaskLists(tasksFromEventTodos(events), Array.isArray(imported.tasks) ? imported.tasks : []);
+    events = events.map((event) => ({ ...event, todos: [] }));
+    taskSettings = normalizeTaskSettings(imported.taskSettings);
     categoryOrder = Array.isArray(imported.categoryOrder) ? imported.categoryOrder : [];
     notes = Array.isArray(imported.notes) ? imported.notes.map(normalizeNote) : [];
     selectedCategories = new Set(events.map((event) => event.category));
     selectedNoteId = null;
     saveEvents();
+    saveTasks();
+    saveTaskSettings();
     saveNotes();
     saveCategoryOrder();
     showIdleForm();
