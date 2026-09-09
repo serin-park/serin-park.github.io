@@ -328,6 +328,7 @@ function demoEvents() {
       latitude: 37.5495,
       longitude: 126.9139,
       category: "SOCIAL",
+      groupId: "demo-group-book-club",
       reservationStatus: "booked",
       notes: "어제 완료된 일정의 회색 표시 예시예요.",
       todos: []
@@ -341,6 +342,7 @@ function demoEvents() {
       locationType: "online",
       url: "https://example.com",
       category: "WORK",
+      groupId: "demo-group-team-meeting",
       reservationStatus: "none",
       notes: "로그인하면 나만의 일정으로 바꿀 수 있어요.",
       todos: [{
@@ -365,6 +367,7 @@ function demoEvents() {
       latitude: 37.56205,
       longitude: 126.92494,
       category: "SOCIAL",
+      groupId: "demo-group-brunch",
       reservationStatus: "booked",
       notes: "예약자 이름 확인하기",
       todos: [],
@@ -455,7 +458,7 @@ function demoEvents() {
       locationAddress: "서울특별시 용산구 한강대로 405",
       latitude: 37.5558,
       longitude: 126.972,
-      category: "ERRAND",
+      category: "LIFE",
       reservationStatus: "none",
       notes: "도착 시간 다시 확인하기",
       todos: [{
@@ -480,6 +483,7 @@ function demoEvents() {
       latitude: 37.5641,
       longitude: 126.9738,
       category: "LIFE",
+      groupId: "demo-group-culture",
       reservationStatus: "needed",
       notes: "이 일정은 데모용 샘플입니다.",
       todos: [{
@@ -503,7 +507,8 @@ function demoEvents() {
       locationAddress: "서울특별시 서초구 남부순환로 2584",
       latitude: 37.483625,
       longitude: 127.032683,
-      category: "HEALTH",
+      category: "LIFE",
+      groupId: "demo-group-fitness",
       reservationStatus: "booked",
       notes: "운동복과 물 챙기기",
       todos: [],
@@ -551,7 +556,8 @@ function demoEvents() {
       endTime: "",
       locationType: "online",
       url: "https://example.com/class",
-      category: "STUDY",
+      category: "WORK",
+      groupId: "demo-group-self-study",
       reservationStatus: "none",
       notes: "시간이 정해지지 않은 종일 일정 예시예요.",
       todos: [{
@@ -575,7 +581,8 @@ function demoEvents() {
       locationAddress: "서울특별시 마포구 동교동",
       latitude: 37.5572,
       longitude: 126.9236,
-      category: "TRAVEL",
+      category: "LIFE",
+      groupId: "demo-group-weekend-trip",
       reservationStatus: "considering",
       reservationRequired: true,
       reservationCompleted: true,
@@ -596,7 +603,8 @@ function demoEvents() {
       locationAddress: "서울특별시 성동구 성수동2가",
       latitude: 37.5446,
       longitude: 127.0557,
-      category: "STUDY",
+      category: "WORK",
+      groupId: "demo-group-self-study",
       reservationStatus: "booked",
       notes: "데모 화면을 자유롭게 둘러보세요.",
       todos: [],
@@ -664,8 +672,16 @@ function activateDemoMode() {
   events = demoEvents();
   tasks = tasksFromEventTodos(events);
   taskSettings = normalizeTaskSettings({ recentCompletedDays: 7 });
-  categoryOrder = ["WORK", "SOCIAL", "ERRAND", "LIFE", "HEALTH", "STUDY", "TRAVEL"];
-  eventGroups = [];
+  categoryOrder = ["WORK", "SOCIAL", "LIFE"];
+  eventGroups = [
+    normalizeEventGroup({ id: "demo-group-team-meeting", name: "주간 팀미팅", category: "WORK", order: 0 }),
+    normalizeEventGroup({ id: "demo-group-self-study", name: "자기계발", category: "WORK", order: 1 }),
+    normalizeEventGroup({ id: "demo-group-book-club", name: "독서모임", category: "SOCIAL", order: 0 }),
+    normalizeEventGroup({ id: "demo-group-brunch", name: "브런치 모임", category: "SOCIAL", order: 1 }),
+    normalizeEventGroup({ id: "demo-group-culture", name: "문화생활", category: "LIFE", order: 0 }),
+    normalizeEventGroup({ id: "demo-group-fitness", name: "운동", category: "LIFE", order: 1 }),
+    normalizeEventGroup({ id: "demo-group-weekend-trip", name: "주말 여행", category: "LIFE", order: 2 })
+  ];
   notes = [];
   homeLocation = {
     latitude: 37.483542,
