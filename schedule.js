@@ -5,6 +5,7 @@ const HOME_VISIBLE_KEY = "serin-schedule-home-visible-v1";
 const NOTES_KEY = "serin-schedule-notes-v1";
 const TASKS_KEY = "serin-schedule-tasks-v1";
 const TASK_SETTINGS_KEY = "serin-schedule-task-settings-v1";
+const GROUPS_KEY = "serin-schedule-groups-v1";
 const CLOUD_CALENDAR_KEY = "serin-schedule-cloud-calendar-v1";
 const CLOUD_OWNER_KEY = "serin-schedule-cloud-owner-v1";
 
@@ -29,9 +30,23 @@ const onlineLinkField = document.querySelector("#onlineLinkField");
 const regularEventFields = document.querySelector("#regularEventFields");
 const travelEventFields = document.querySelector("#travelEventFields");
 const categoryInput = document.querySelector("#category");
+const classificationList = document.querySelector("#classificationList");
+const addClassificationButton = document.querySelector("#addClassificationButton");
 const categoryMenuButton = document.querySelector("#categoryMenuButton");
 const categoryMenu = document.querySelector("#categoryMenu");
 const categoryManagerList = document.querySelector("#categoryManagerList");
+const categoryManager = document.querySelector(".category-manager");
+const categoryManagerEditButton = document.querySelector("#categoryManagerEditButton");
+const eventGroupInput = document.querySelector("#eventGroupInput");
+const eventGroupOptions = document.querySelector("#eventGroupOptions");
+const groupManagerList = document.querySelector("#groupManagerList");
+const eventRepeatInput = document.querySelector("#eventRepeatInput");
+const recurrenceOptions = document.querySelector("#recurrenceOptions");
+const recurrenceFrequency = document.querySelector("#recurrenceFrequency");
+const recurrenceInterval = document.querySelector("#recurrenceInterval");
+const recurrenceEndDate = document.querySelector("#recurrenceEndDate");
+const recurrenceWeekdays = document.querySelector("#recurrenceWeekdays");
+const recurrenceMasterNote = document.querySelector("#recurrenceMasterNote");
 const timelineView = document.querySelector("#timelineView");
 const categoriesView = document.querySelector("#categoriesView");
 const tasksView = document.querySelector("#tasksView");
@@ -40,8 +55,16 @@ const taskTitleInput = document.querySelector("#taskTitleInput");
 const taskDueDateInput = document.querySelector("#taskDueDateInput");
 const taskDueTimeInput = document.querySelector("#taskDueTimeInput");
 const taskEventSelect = document.querySelector("#taskEventSelect");
+const taskParentSelect = document.querySelector("#taskParentSelect");
 const taskSubmissionInput = document.querySelector("#taskSubmissionInput");
+const taskRepeatInput = document.querySelector("#taskRepeatInput");
+const taskRepeatOptions = document.querySelector("#taskRepeatOptions");
+const taskRepeatFrequency = document.querySelector("#taskRepeatFrequency");
+const taskRepeatInterval = document.querySelector("#taskRepeatInterval");
+const taskRepeatEndDate = document.querySelector("#taskRepeatEndDate");
+const taskRepeatWeekdays = document.querySelector("#taskRepeatWeekdays");
 const taskMemoInput = document.querySelector("#taskMemoInput");
+const taskChildButton = document.querySelector("#taskChildButton");
 const taskArchiveButton = document.querySelector("#taskArchiveButton");
 const taskDeleteButton = document.querySelector("#taskDeleteButton");
 const notesView = document.querySelector("#notesView");
@@ -126,7 +149,8 @@ const syncNowButton = document.querySelector("#syncNowButton");
 const syncAccountCard = document.querySelector("#syncAccountCard");
 
 let events = loadEvents();
-let tasks = loadTasks(events);
+let tasks = removeClonedRecurringEventTasks(loadTasks(events), events);
+localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
 if (events.some((event) => event.todos?.length)) {
   events = events.map((event) => ({ ...event, todos: [] }));
   localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
@@ -134,8 +158,12 @@ if (events.some((event) => event.todos?.length)) {
 }
 let taskSettings = loadTaskSettings();
 let categoryOrder = loadCategoryOrder();
+let eventGroups = loadEventGroups();
 let notes = loadNotes();
-let selectedCategories = new Set(events.map((event) => normalizedCategory(event.category || "ETC")));
+let selectedCategories = new Set(currentCategories());
+let excludedClassificationKeys = new Set();
+let classificationAllCleared = false;
+let classificationManagerEditing = false;
 let draggedCategoryItem = null;
 let draggedCategoryContainer = null;
 let selectedEventId = null;
@@ -207,9 +235,57 @@ function normalizeTask(task = {}) {
     archivedAt: String(task.archivedAt || ""),
     memo: String(task.memo || ""),
     eventId: String(task.eventId || ""),
+    groupId: String(task.groupId || ""),
+    classifications: normalizeClassificationLinks(task.classifications, {
+      category: task.category || "MISC",
+      groupId: task.groupId
+    }),
+    parentTaskId: String(task.parentTaskId || ""),
+    repeatSeriesId: String(task.repeatSeriesId || ""),
+    repeatRule: task.repeatRule && typeof task.repeatRule === "object" ? task.repeatRule : null,
     createdAt: String(task.createdAt || now),
     updatedAt: String(task.updatedAt || task.createdAt || now)
   };
+}
+
+function normalizeClassificationLinks(rawLinks, legacy = {}) {
+  const links = Array.isArray(rawLinks) && rawLinks.length
+    ? rawLinks
+    : [{ category: legacy.category || "MISC", groupId: legacy.groupId || "" }];
+  const unique = new Map();
+  links.forEach((rawLink) => {
+    const category = normalizedCategory(rawLink?.category || "MISC");
+    const groupId = String(rawLink?.groupId || "");
+    unique.set(`${category}::${groupId}`, { category, groupId });
+  });
+  return [...unique.values()];
+}
+
+function normalizeEventGroup(group = {}) {
+  return {
+    id: String(group.id || crypto.randomUUID()),
+    name: String(group.name || "").trim().slice(0, 80),
+    category: normalizedCategory(group.category || "ETC"),
+    order: Number.isFinite(Number(group.order)) ? Number(group.order) : 0,
+    createdAt: String(group.createdAt || new Date().toISOString()),
+    updatedAt: String(group.updatedAt || group.createdAt || new Date().toISOString())
+  };
+}
+
+function loadEventGroups() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(GROUPS_KEY) || "[]");
+    return Array.isArray(saved) ? saved.map(normalizeEventGroup).filter((group) => group.name) : [];
+  } catch (error) {
+    console.error("저장된 일정 그룹을 불러오지 못했습니다.", error);
+    return [];
+  }
+}
+
+function saveEventGroups() {
+  if (demoMode) return;
+  localStorage.setItem(GROUPS_KEY, JSON.stringify(eventGroups));
+  queueCloudSync();
 }
 
 function tasksFromEventTodos(sourceEvents = []) {
@@ -229,6 +305,40 @@ function mergeTaskLists(...lists) {
     if (!existing || String(task.updatedAt) >= String(existing.updatedAt)) merged.set(task.id, task);
   });
   return [...merged.values()];
+}
+
+function removeClonedRecurringEventTasks(sourceTasks = [], sourceEvents = []) {
+  const recurringEvents = new Map(
+    sourceEvents
+      .filter((event) => event.recurrenceSeriesId)
+      .map((event) => [event.id, event])
+  );
+  const earliestSignature = new Map();
+
+  return [...sourceTasks]
+    .sort((a, b) => {
+      const eventA = recurringEvents.get(a.eventId);
+      const eventB = recurringEvents.get(b.eventId);
+      return String(eventA?.date || "").localeCompare(String(eventB?.date || ""));
+    })
+    .filter((rawTask) => {
+      const task = normalizeTask(rawTask);
+      const event = recurringEvents.get(task.eventId);
+      if (!event) return true;
+
+      const signature = JSON.stringify([
+        event.recurrenceSeriesId,
+        task.title,
+        task.dueDate,
+        task.dueTime,
+        task.submissionRequired,
+        task.memo,
+        task.createdAt
+      ]);
+      if (earliestSignature.has(signature)) return false;
+      earliestSignature.set(signature, task.id);
+      return true;
+    });
 }
 
 function loadTasks(sourceEvents = []) {
@@ -385,11 +495,12 @@ function saveHomeSettings() {
 
 function plannerState() {
   return {
-    version: 9,
+    version: 11,
     events,
     tasks,
     taskSettings,
     categoryOrder,
+    eventGroups,
     notes,
     homeLocation,
     homeVisible,
@@ -761,6 +872,7 @@ function activateDemoMode() {
   tasks = tasksFromEventTodos(events);
   taskSettings = normalizeTaskSettings({ recentCompletedDays: 7 });
   categoryOrder = ["WORK", "SOCIAL", "ERRAND", "LIFE", "HEALTH", "STUDY", "TRAVEL"];
+  eventGroups = [];
   notes = [];
   homeLocation = {
     latitude: 37.483542,
@@ -786,7 +898,7 @@ function restorePrivateLocalState() {
   if (!demoMode) return;
   demoMode = false;
   events = loadEvents();
-  tasks = loadTasks(events);
+  tasks = removeClonedRecurringEventTasks(loadTasks(events), events);
   if (events.some((event) => event.todos?.length)) {
     events = events.map((event) => ({ ...event, todos: [] }));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
@@ -794,10 +906,11 @@ function restorePrivateLocalState() {
   }
   taskSettings = loadTaskSettings();
   categoryOrder = loadCategoryOrder();
+  eventGroups = loadEventGroups();
   notes = loadNotes();
   homeLocation = loadHomeLocation();
   homeVisible = loadHomeVisibility() && Boolean(homeLocation);
-  selectedCategories = new Set(events.map((event) => normalizedCategory(event.category || "ETC")));
+  selectedCategories = new Set(currentCategories());
   selectedEventId = null;
   selectedNoteId = null;
 }
@@ -835,6 +948,7 @@ function storePlannerState(state) {
   const incomingEvents = Array.isArray(state?.events) ? state.events : [];
   const incomingTasks = Array.isArray(state?.tasks) ? state.tasks : [];
   const incomingCategoryOrder = Array.isArray(state?.categoryOrder) ? state.categoryOrder : [];
+  const incomingEventGroups = Array.isArray(state?.eventGroups) ? state.eventGroups : [];
   const incomingHome = state?.homeLocation;
   const incomingNotes = Array.isArray(state?.notes) ? state.notes : [];
 
@@ -844,10 +958,14 @@ function storePlannerState(state) {
     id: event.id || crypto.randomUUID(),
     category: normalizedCategory(event.category || "ETC")
   }));
-  tasks = mergeTaskLists(tasksFromEventTodos(events), incomingTasks);
+  tasks = removeClonedRecurringEventTasks(
+    mergeTaskLists(tasksFromEventTodos(events), incomingTasks),
+    events
+  );
   events = events.map((event) => ({ ...event, todos: [] }));
   taskSettings = normalizeTaskSettings(state?.taskSettings);
   categoryOrder = incomingCategoryOrder.map(normalizedCategory);
+  eventGroups = incomingEventGroups.map(normalizeEventGroup).filter((group) => group.name);
   notes = incomingNotes.map(normalizeNote);
   homeLocation = incomingHome && Number.isFinite(Number(incomingHome.latitude)) && Number.isFinite(Number(incomingHome.longitude))
     ? {
@@ -858,13 +976,14 @@ function storePlannerState(state) {
       }
     : null;
   homeVisible = Boolean(state?.homeVisible && homeLocation);
-  selectedCategories = new Set(events.map((event) => event.category));
+  selectedCategories = new Set(currentCategories());
   if (!notes.some((note) => note.id === selectedNoteId)) selectedNoteId = null;
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
   localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
   localStorage.setItem(TASK_SETTINGS_KEY, JSON.stringify(taskSettings));
   localStorage.setItem(CATEGORY_ORDER_KEY, JSON.stringify(categoryOrder));
+  localStorage.setItem(GROUPS_KEY, JSON.stringify(eventGroups));
   localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
   if (homeLocation) {
     localStorage.setItem(HOME_LOCATION_KEY, JSON.stringify(homeLocation));
@@ -893,18 +1012,28 @@ function mergedPlannerState(localState, cloudState) {
     const existing = mergedNotes.get(note.id);
     if (!existing || String(note.updatedAt) >= String(existing.updatedAt)) mergedNotes.set(note.id, note);
   });
-  const mergedTasks = mergeTaskLists(
+  const mergedTasks = removeClonedRecurringEventTasks(mergeTaskLists(
     tasksFromEventTodos(Array.isArray(localState?.events) ? localState.events : []),
     tasksFromEventTodos(Array.isArray(cloudState?.events) ? cloudState.events : []),
     Array.isArray(localState?.tasks) ? localState.tasks : [],
     Array.isArray(cloudState?.tasks) ? cloudState.tasks : []
-  );
+  ), [...mergedEvents.values()]);
+  const mergedGroups = new Map();
+  [
+    ...(Array.isArray(localState?.eventGroups) ? localState.eventGroups : []),
+    ...(Array.isArray(cloudState?.eventGroups) ? cloudState.eventGroups : [])
+  ].forEach((rawGroup) => {
+    const group = normalizeEventGroup(rawGroup);
+    const existing = mergedGroups.get(group.id);
+    if (!existing || group.updatedAt >= existing.updatedAt) mergedGroups.set(group.id, group);
+  });
   return {
-    version: 9,
+    version: 11,
     events: [...mergedEvents.values()].map((event) => ({ ...event, todos: [] })),
     tasks: mergedTasks,
     taskSettings: normalizeTaskSettings(cloudState?.taskSettings || localState?.taskSettings),
     categoryOrder: [...new Set([...cloudCategories, ...localCategories])],
+    eventGroups: [...mergedGroups.values()],
     notes: [...mergedNotes.values()],
     homeLocation: cloudState?.homeLocation || localState?.homeLocation || null,
     homeVisible: cloudState?.homeLocation
@@ -1119,7 +1248,7 @@ async function initializeCloudSync() {
 }
 
 function normalizedCategory(value) {
-  return value.trim().toUpperCase() || "ETC";
+  return String(value || "").trim() || "MISC";
 }
 
 function normalizeTime(value) {
@@ -1192,6 +1321,20 @@ function normalizeEventTodos(event) {
 
   return {
     ...event,
+    groupId: String(event.groupId || ""),
+    classifications: normalizeClassificationLinks(event.classifications, {
+      category: event.category || "MISC",
+      groupId: event.groupId
+    }),
+    recurrenceSeriesId: String(event.recurrenceSeriesId || ""),
+    recurrenceMasterId: String(event.recurrenceMasterId || ""),
+    recurrenceException: Boolean(event.recurrenceException),
+    recurrenceRule: event.recurrenceRule && typeof event.recurrenceRule === "object" ? {
+      frequency: ["daily", "weekly", "monthly"].includes(event.recurrenceRule.frequency) ? event.recurrenceRule.frequency : "weekly",
+      interval: Math.max(1, Number(event.recurrenceRule.interval) || 1),
+      weekdays: Array.isArray(event.recurrenceRule.weekdays) ? event.recurrenceRule.weekdays.map(Number).filter((day) => day >= 0 && day <= 6) : [],
+      endDate: String(event.recurrenceRule.endDate || "")
+    } : null,
     eventKind: isTravelEvent(event) ? "travel" : "regular",
     location: compactLocation,
     locationDetail: String(event.locationDetail || ""),
@@ -1217,7 +1360,132 @@ function normalizeEventTodos(event) {
 }
 
 function currentCategories() {
-  return [...new Set(events.map((event) => normalizedCategory(event.category || "ETC")))];
+  return [...new Set([
+    ...events.flatMap((event) => event.classifications?.map((link) => link.category) || [normalizedCategory(event.category || "MISC")]),
+    ...tasks.flatMap((task) => task.classifications?.map((link) => link.category) || []),
+    ...eventGroups.map((group) => group.category),
+    ...categoryOrder
+  ])];
+}
+
+function eventClassificationLinks(event) {
+  return normalizeClassificationLinks(event?.classifications, {
+    category: event?.category || "MISC",
+    groupId: event?.groupId || ""
+  });
+}
+
+function taskClassificationLinks(task) {
+  const linkedEvent = taskLinkedEvent(task);
+  return linkedEvent
+    ? eventClassificationLinks(linkedEvent)
+    : normalizeClassificationLinks(task?.classifications, {
+        category: task?.category || "MISC",
+        groupId: task?.groupId || ""
+      });
+}
+
+function classificationKey(link = {}) {
+  return `${normalizedCategory(link.category || "MISC")}::${String(link.groupId || "")}`;
+}
+
+function matchesClassificationFilter(links) {
+  return normalizeClassificationLinks(links).some((link) => !excludedClassificationKeys.has(classificationKey(link)));
+}
+
+function eventMatchesClassificationFilter(event) {
+  return matchesClassificationFilter(eventClassificationLinks(event));
+}
+
+function taskMatchesClassificationFilter(task) {
+  return matchesClassificationFilter(taskClassificationLinks(task));
+}
+
+function visibleClassificationLinks() {
+  const links = [];
+  events.filter((event) => dateMatchesActiveFilter(event.date)).forEach((event) => links.push(...eventClassificationLinks(event)));
+  tasks.filter((task) => taskMatchesCalendar(task)).forEach((task) => links.push(...taskClassificationLinks(task)));
+  const unique = new Map();
+  links.forEach((link) => unique.set(classificationKey(link), link));
+  return [...unique.values()];
+}
+
+function renderClassificationFilterToolbar() {
+  const toolbar = element("div", "category-filter-toolbar classification-filter-toolbar");
+  const header = element("div", "category-filter-header");
+  header.append(element("strong", "", "분류 필터"), element("span", "", "선택한 날짜에 있는 분류만 표시"));
+  const actions = element("div", "category-filter-actions");
+  const selectAll = element("button", "text-button", "모두 선택");
+  const clearAll = element("button", "text-button", "모두 해제");
+  selectAll.type = clearAll.type = "button";
+  selectAll.addEventListener("click", () => {
+    excludedClassificationKeys.clear();
+    classificationAllCleared = false;
+    renderAll();
+  });
+  clearAll.addEventListener("click", () => {
+    visibleClassificationLinks().forEach((link) => excludedClassificationKeys.add(classificationKey(link)));
+    classificationAllCleared = true;
+    renderAll();
+  });
+  actions.append(selectAll, clearAll);
+  header.append(actions);
+  toolbar.append(header);
+
+  const links = visibleClassificationLinks();
+  if (classificationAllCleared) links.forEach((link) => excludedClassificationKeys.add(classificationKey(link)));
+  const byCategory = new Map();
+  links.forEach((link) => {
+    if (!byCategory.has(link.category)) byCategory.set(link.category, []);
+    byCategory.get(link.category).push(link);
+  });
+  const tree = element("div", "classification-filter-tree");
+  orderedCategories().filter((category) => byCategory.has(category)).forEach((category) => {
+    const categoryLinks = byCategory.get(category);
+    const node = element("div", "classification-filter-node");
+    const categoryKeys = categoryLinks.map(classificationKey);
+    const activeCount = categoryKeys.filter((key) => !excludedClassificationKeys.has(key)).length;
+    const categoryButton = element(
+      "button",
+      `category-filter-button classification-category-filter${activeCount ? " is-active" : ""}${activeCount && activeCount < categoryKeys.length ? " is-mixed" : ""}`,
+      `#${category}`
+    );
+    categoryButton.type = "button";
+    categoryButton.setAttribute("aria-pressed", String(activeCount === categoryKeys.length));
+    categoryButton.addEventListener("click", () => {
+      const turnOn = activeCount !== categoryKeys.length;
+      categoryKeys.forEach((key) => turnOn ? excludedClassificationKeys.delete(key) : excludedClassificationKeys.add(key));
+      classificationAllCleared = false;
+      renderAll();
+    });
+    node.append(categoryButton);
+
+    const groupList = element("div", "classification-filter-groups");
+    categoryLinks
+      .sort((a, b) => {
+        const first = groupForId(a.groupId)?.order ?? Number.MAX_SAFE_INTEGER;
+        const second = groupForId(b.groupId)?.order ?? Number.MAX_SAFE_INTEGER;
+        return first - second;
+      })
+      .forEach((link) => {
+        const key = classificationKey(link);
+        const group = groupForId(link.groupId);
+        const button = element("button", `classification-group-filter${excludedClassificationKeys.has(key) ? "" : " is-active"}`, group?.name || "그룹 없음");
+        button.type = "button";
+        button.setAttribute("aria-pressed", String(!excludedClassificationKeys.has(key)));
+        button.addEventListener("click", () => {
+          if (excludedClassificationKeys.has(key)) excludedClassificationKeys.delete(key);
+          else excludedClassificationKeys.add(key);
+          classificationAllCleared = false;
+          renderAll();
+        });
+        groupList.append(button);
+      });
+    node.append(groupList);
+    tree.append(node);
+  });
+  toolbar.append(tree);
+  return toolbar;
 }
 
 function eventLocationLabel(event) {
@@ -1304,6 +1572,107 @@ function dateInputValue(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function addCalendarDays(date, amount) {
+  const next = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function recurrenceDates(startDate, rule) {
+  if (!startDate || !rule?.endDate || rule.endDate < startDate) return [];
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${rule.endDate}T00:00:00`);
+  const interval = Math.max(1, Number(rule.interval) || 1);
+  const weekdays = new Set((rule.weekdays || []).map(Number));
+  const dates = [];
+  for (let cursor = new Date(start); cursor <= end && dates.length < 500; cursor = addCalendarDays(cursor, 1)) {
+    const elapsedDays = Math.round((cursor - start) / 86400000);
+    let matches = false;
+    if (rule.frequency === "daily") matches = elapsedDays % interval === 0;
+    else if (rule.frequency === "monthly") {
+      const elapsedMonths = (cursor.getFullYear() - start.getFullYear()) * 12 + cursor.getMonth() - start.getMonth();
+      matches = elapsedMonths % interval === 0 && cursor.getDate() === start.getDate();
+    } else {
+      const elapsedWeeks = Math.floor(elapsedDays / 7);
+      matches = elapsedWeeks % interval === 0 && (weekdays.size ? weekdays.has(cursor.getDay()) : cursor.getDay() === start.getDay());
+    }
+    if (matches) dates.push(dateInputValue(cursor));
+  }
+  return dates;
+}
+
+function recurrenceSeriesEvents(event) {
+  if (!event?.recurrenceSeriesId) return [];
+  return events
+    .filter((item) => item.recurrenceSeriesId === event.recurrenceSeriesId)
+    .sort((a, b) => a.date.localeCompare(b.date) || String(a.createdAt).localeCompare(String(b.createdAt)));
+}
+
+function recurrenceMasterFor(event) {
+  const series = recurrenceSeriesEvents(event);
+  return series.find((item) => item.id === event?.recurrenceMasterId) || series[0] || event;
+}
+
+function currentEventRecurrenceRule() {
+  return {
+    frequency: recurrenceFrequency.value,
+    interval: Math.max(1, Number(recurrenceInterval.value) || 1),
+    weekdays: [...recurrenceWeekdays.querySelectorAll('input[type="checkbox"]:checked')].map((input) => Number(input.value)),
+    endDate: recurrenceEndDate.value
+  };
+}
+
+function syncEventRecurrenceFields({ initialize = false } = {}) {
+  const active = eventRepeatInput.checked;
+  recurrenceOptions.hidden = !active;
+  recurrenceEndDate.required = active;
+  recurrenceWeekdays.hidden = recurrenceFrequency.value !== "weekly";
+  if (!active || !initialize) return;
+  const startValue = document.querySelector("#date").value;
+  if (startValue && !recurrenceEndDate.value) {
+    const start = new Date(`${startValue}T00:00:00`);
+    const end = new Date(start.getFullYear(), start.getMonth() + 3, start.getDate());
+    recurrenceEndDate.value = dateInputValue(end);
+  }
+  if (startValue && recurrenceFrequency.value === "weekly" && !recurrenceWeekdays.querySelector('input:checked')) {
+    const weekday = new Date(`${startValue}T00:00:00`).getDay();
+    const checkbox = recurrenceWeekdays.querySelector(`input[value="${weekday}"]`);
+    if (checkbox) checkbox.checked = true;
+  }
+}
+
+function setRecurrenceEditingState(event = null) {
+  const master = recurrenceMasterFor(event);
+  const isSeriesInstance = Boolean(event?.recurrenceSeriesId);
+  const isMaster = !isSeriesInstance || master?.id === event?.id;
+  eventRepeatInput.disabled = isSeriesInstance && !isMaster;
+  [recurrenceFrequency, recurrenceInterval, recurrenceEndDate].forEach((control) => { control.disabled = isSeriesInstance && !isMaster; });
+  recurrenceWeekdays.querySelectorAll("input").forEach((control) => { control.disabled = isSeriesInstance && !isMaster; });
+  recurrenceMasterNote.hidden = !isSeriesInstance || isMaster;
+  recurrenceMasterNote.textContent = isSeriesInstance && !isMaster
+    ? `반복 설정은 첫 일정 ${compactDate(master.date)}에서 변경할 수 있어요.`
+    : "";
+}
+
+const RECURRING_SHARED_FIELDS = [
+  "title", "startTime", "endTime", "eventKind", "locationType", "location", "locationDetail",
+  "locationAddress", "latitude", "longitude", "departureLocation", "departureLocationDetail",
+  "departureLocationAddress", "departureLatitude", "departureLongitude", "destinationLocation",
+  "destinationLocationDetail", "destinationLocationAddress", "destinationLatitude", "destinationLongitude",
+  "url", "category", "groupId", "classifications", "reservationStatus", "reservationRequired",
+  "reservationCompleted", "cancellationDeadline", "cancellationNotes"
+];
+
+function recurringSharedChanged(before, after) {
+  return RECURRING_SHARED_FIELDS.some((key) => JSON.stringify(before?.[key] ?? null) !== JSON.stringify(after?.[key] ?? null));
+}
+
+function copyRecurringSharedFields(target, source) {
+  const next = { ...target };
+  RECURRING_SHARED_FIELDS.forEach((key) => { next[key] = source[key]; });
+  return next;
 }
 
 function dateMatchesActiveFilter(date) {
@@ -2131,6 +2500,7 @@ function eventTasks(eventId) {
 
 function syncEventTasks(eventId, formTodos) {
   const now = new Date().toISOString();
+  const linkedEvent = events.find((event) => event.id === eventId);
   const incomingIds = new Set(formTodos.map((todo) => todo.id));
   tasks = tasks.filter((task) => task.eventId !== eventId || isArchivedTask(task) || incomingIds.has(task.id));
   formTodos.forEach((todo) => {
@@ -2142,6 +2512,8 @@ function syncEventTasks(eventId, formTodos) {
       ...existing,
       ...todo,
       eventId,
+      groupId: linkedEvent?.groupId || existing?.groupId || "",
+      classifications: linkedEvent ? eventClassificationLinks(linkedEvent) : existing?.classifications,
       completedAt,
       createdAt: todo.createdAt || existing?.createdAt || now,
       updatedAt: now
@@ -2212,7 +2584,12 @@ function eventCard(event, { showDate = false, showCategory = true, stackDateTime
   const meta = element("span", "compact-event-meta");
   const reservationPill = reservationStatusPill(event);
   if (reservationPill) meta.append(reservationPill);
-  if (showCategory) meta.append(element("span", "category-pill", event.category));
+  const classificationLinks = eventClassificationLinks(event);
+  classificationLinks.forEach((link) => {
+    const linkedGroup = groupForId(link.groupId);
+    if (linkedGroup) meta.append(element("span", "group-pill", linkedGroup.name));
+    if (showCategory) meta.append(element("span", "category-pill", link.category));
+  });
   summary.append(primary, meta);
   card.append(summary);
 
@@ -2226,6 +2603,13 @@ function eventCard(event, { showDate = false, showCategory = true, stackDateTime
     dateValue
   );
   info.append(dateInfo);
+
+  const eventGroup = groupForId(event.groupId);
+  if (eventGroup) {
+    const groupInfo = element("div", "event-info-item");
+    groupInfo.append(element("span", "", "그룹"), element("strong", "", eventGroup.name));
+    info.append(groupInfo);
+  }
 
   const locationType = inferredLocationType(event);
   const locationText = locationType === "online" ? "온라인" : eventLocationLabel(event);
@@ -2362,7 +2746,7 @@ function submissionTimelineCard(event, todo, { dimmed = false } = {}) {
   );
   primary.append(time, element("span", "compact-event-divider", "—"), copy);
   const meta = element("span", "compact-event-meta");
-  if (event) meta.append(element("span", "category-pill", event.category));
+  if (event) eventClassificationLinks(event).forEach((link) => meta.append(element("span", "category-pill", link.category)));
   summary.append(primary, meta);
   card.append(summary);
 
@@ -2413,6 +2797,7 @@ function submissionTimelineCard(event, todo, { dimmed = false } = {}) {
 
 function renderTimeline() {
   timelineView.replaceChildren();
+  timelineView.append(renderClassificationFilterToolbar());
 
   const timelineEntries = [];
   events.forEach((event) => {
@@ -2424,7 +2809,10 @@ function renderTimeline() {
       timelineEntries.push({ kind: "submission", date: todo.dueDate, time: todo.dueTime || "", event: taskLinkedEvent(todo), todo });
     });
 
-  const sorted = timelineEntries.filter((entry) => dateMatchesTimelineFilter(entry.date)).sort((a, b) => {
+  const sorted = timelineEntries.filter((entry) => (
+    dateMatchesTimelineFilter(entry.date)
+    && (entry.kind === "submission" ? taskMatchesClassificationFilter(entry.todo) : eventMatchesClassificationFilter(entry.event))
+  )).sort((a, b) => {
     const dateComparison = a.date.localeCompare(b.date);
     if (dateComparison) return dateComparison;
     if (Boolean(a.time) !== Boolean(b.time)) return a.time ? 1 : -1;
@@ -2471,68 +2859,26 @@ function renderTimeline() {
 
 function renderCategories() {
   categoriesView.replaceChildren();
+  categoriesView.append(renderClassificationFilterToolbar());
   const categories = orderedCategories();
-  const visibleEvents = events.filter((event) => dateMatchesActiveFilter(event.date));
+  const visibleEvents = events.filter((event) => dateMatchesActiveFilter(event.date) && eventMatchesClassificationFilter(event));
 
   if (!categories.length) {
     categoriesView.append(emptyState("표시할 카테고리가 없어요", "일정을 추가하면 카테고리 카드가 자동으로 생깁니다."));
     return;
   }
 
-  const filterToolbar = element("div", "category-filter-toolbar");
-  const filterHeader = element("div", "category-filter-header");
-  filterHeader.append(element("strong", "", "카테고리 필터"), element("span", "", "드래그해서 순서 변경"));
-
-  const filterActions = element("div", "category-filter-actions");
-  const selectAllButton = element("button", "text-button", "모두 선택");
-  selectAllButton.type = "button";
-  selectAllButton.addEventListener("click", () => {
-    selectedCategories = new Set(categories);
-    renderCategories();
-  });
-
-  const clearAllButton = element("button", "text-button", "모두 해제");
-  clearAllButton.type = "button";
-  clearAllButton.addEventListener("click", () => {
-    selectedCategories.clear();
-    renderCategories();
-  });
-  filterActions.append(selectAllButton, clearAllButton);
-  filterHeader.append(filterActions);
-
-  const filterList = element("div", "category-filter-list");
-  categories.forEach((category) => {
-    const chip = element("div", "category-filter-chip");
-    chip.dataset.category = category;
-    chip.draggable = true;
-    const button = element("button", `category-filter-button${selectedCategories.has(category) ? " is-active" : ""}`, `#${category}`);
-    button.type = "button";
-    button.setAttribute("aria-pressed", String(selectedCategories.has(category)));
-    button.addEventListener("click", () => {
-      if (selectedCategories.has(category)) {
-        selectedCategories.delete(category);
-      } else {
-        selectedCategories.add(category);
-      }
-      renderCategories();
-    });
-    chip.append(button);
-    filterList.append(chip);
-  });
-
-  filterToolbar.append(filterHeader, filterList);
-  categoriesView.append(filterToolbar);
-  setupCategoryDragSorting(filterList);
-
   const grouped = sortEvents(visibleEvents).reduce((groups, event) => {
-    if (!groups[event.category]) groups[event.category] = [];
-    groups[event.category].push(event);
+    eventClassificationLinks(event).forEach((link) => {
+      if (!groups[link.category]) groups[link.category] = [];
+      groups[link.category].push(event);
+    });
     return groups;
   }, {});
 
   const grid = element("div", "category-grid");
   categories
-    .filter((category) => selectedCategories.has(category) && grouped[category]?.length)
+    .filter((category) => grouped[category]?.length)
     .forEach((category) => {
       const categoryEvents = grouped[category] || [];
       const card = element("article", "category-card");
@@ -2558,52 +2904,380 @@ function renderCategories() {
   if (grid.childElementCount) {
     categoriesView.append(grid);
   } else {
-    const hasSelectedCategory = categories.some((category) => selectedCategories.has(category));
     categoriesView.append(emptyState(
-      hasSelectedCategory ? "선택한 기간에 일정이 없어요" : "선택된 카테고리가 없어요",
-      hasSelectedCategory
-        ? "위 달력에서 다른 날짜나 범위를 선택해보세요."
-        : "위에서 카테고리를 선택하거나 모두 선택을 눌러주세요."
+      "선택한 조건에 일정이 없어요",
+      "날짜나 분류 필터를 바꿔보세요."
     ));
   }
 }
 
 function renderCategoryControls() {
   categoryManagerList.replaceChildren();
+  categoryManager.classList.toggle("is-editing", classificationManagerEditing);
+  categoryManagerEditButton.textContent = classificationManagerEditing ? "완료" : "수정";
   const categories = orderedCategories();
 
   renderCategoryMenu(categories);
 
   categories.forEach((category) => {
+    const node = element("section", "classification-manager-node");
+    node.dataset.category = category;
     const row = element("div", "category-manager-row");
-    row.dataset.category = category;
     const dragHandle = element("button", "category-drag-handle", "⠿");
     dragHandle.type = "button";
     dragHandle.draggable = true;
     dragHandle.title = `${category} 순서 변경`;
     dragHandle.setAttribute("aria-label", `${category} 카테고리 순서 변경`);
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = category;
-    input.setAttribute("aria-label", `${category} 카테고리 새 이름`);
-    const button = element("button", "", "변경");
-    button.type = "button";
-    button.addEventListener("click", () => renameCategory(category, input.value));
-    input.addEventListener("keydown", (keyEvent) => {
-      if (keyEvent.key === "Enter") {
-        keyEvent.preventDefault();
-        renameCategory(category, input.value);
+    row.classList.toggle("is-viewing", !classificationManagerEditing);
+    row.append(dragHandle);
+    if (classificationManagerEditing) {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = category;
+      input.setAttribute("aria-label", `${category} 카테고리 새 이름`);
+      const button = element("button", "", "변경");
+      button.type = "button";
+      button.addEventListener("click", () => renameCategory(category, input.value));
+      const remove = element("button", "category-manager-delete", "삭제");
+      remove.type = "button";
+      remove.disabled = category === "MISC";
+      remove.title = category === "MISC" ? "MISC는 기본 카테고리라 삭제할 수 없어요." : `${category} 카테고리 삭제`;
+      remove.addEventListener("click", () => deleteCategory(category));
+      input.addEventListener("keydown", (keyEvent) => {
+        if (keyEvent.key === "Enter") {
+          keyEvent.preventDefault();
+          renameCategory(category, input.value);
+        }
+      });
+      row.append(input, button, remove);
+    } else {
+      row.append(element("strong", "category-manager-name", category));
+    }
+
+    const groupList = element("div", "classification-manager-groups");
+    groupsForCategory(category).forEach((group) => {
+      const groupRow = element("div", "group-manager-row");
+      groupRow.dataset.groupId = group.id;
+      const groupDrag = element("button", "group-drag-handle", "⠿");
+      groupDrag.type = "button";
+      groupDrag.draggable = true;
+      groupDrag.setAttribute("aria-label", `${group.name} 그룹 이동`);
+      groupRow.classList.toggle("is-viewing", !classificationManagerEditing);
+      groupRow.append(groupDrag);
+      if (classificationManagerEditing) {
+        const groupInput = document.createElement("input");
+        groupInput.type = "text";
+        groupInput.value = group.name;
+        const groupSave = element("button", "", "변경");
+        groupSave.type = "button";
+        groupSave.addEventListener("click", () => renameEventGroup(group.id, groupInput.value));
+        const groupRemove = element("button", "group-manager-delete", "삭제");
+        groupRemove.type = "button";
+        groupRemove.addEventListener("click", () => deleteEventGroup(group.id));
+        groupRow.append(groupInput, groupSave, groupRemove);
+      } else {
+        groupRow.append(element("span", "group-manager-name", group.name));
       }
+      groupList.append(groupRow);
     });
-    row.append(dragHandle, input, button);
-    categoryManagerList.append(row);
+    if (!groupList.childElementCount) groupList.append(element("span", "classification-group-empty", "그룹 없음"));
+    if (classificationManagerEditing) {
+      const addGroup = element("button", "classification-manager-add", "+ 그룹 추가");
+      addGroup.type = "button";
+      addGroup.addEventListener("click", () => {
+        const name = window.prompt(`#${category}에 추가할 그룹 이름을 입력해주세요.`);
+        if (!name?.trim()) return;
+        ensureEventGroup(name, category);
+        saveEventGroups();
+        renderAll();
+      });
+      groupList.append(addGroup);
+    }
+    node.append(row, groupList);
+    categoryManagerList.append(node);
   });
 
   if (!categories.length) {
     categoryManagerList.append(element("span", "category-manager-empty", "일정을 추가하면 카테고리가 생겨요."));
   }
 
+  if (classificationManagerEditing) {
+    const addCategoryRow = element("div", "classification-category-add");
+    const addCategoryInput = document.createElement("input");
+    addCategoryInput.type = "text";
+    addCategoryInput.placeholder = "카테고리 이름";
+    addCategoryInput.setAttribute("aria-label", "새 카테고리 이름");
+    const addCategoryButton = element("button", "", "+ 추가");
+    addCategoryButton.type = "button";
+    const createCategory = () => {
+      const category = normalizedCategory(addCategoryInput.value);
+      if (!addCategoryInput.value.trim()) return;
+      if (!categoryOrder.includes(category)) categoryOrder.push(category);
+      selectedCategories.add(category);
+      saveCategoryOrder();
+      renderAll();
+    };
+    addCategoryButton.addEventListener("click", createCategory);
+    addCategoryInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      createCategory();
+    });
+    addCategoryRow.append(addCategoryInput, addCategoryButton);
+    categoryManagerList.append(addCategoryRow);
+  }
+
   setupCategoryDragSorting(categoryManagerList);
+  setupGroupDragSorting(categoryManagerList);
+}
+
+function setupGroupDragSorting(container) {
+  if (container.dataset.groupDragReady === "true") return;
+  container.dataset.groupDragReady = "true";
+  let draggedGroup = null;
+
+  container.addEventListener("dragstart", (dragEvent) => {
+    const row = dragEvent.target.closest("[data-group-id]");
+    if (!row) return;
+    draggedGroup = row;
+    row.classList.add("is-dragging");
+    dragEvent.dataTransfer.effectAllowed = "move";
+    dragEvent.dataTransfer.setData("text/plain", row.dataset.groupId);
+    dragEvent.stopPropagation();
+  });
+  container.addEventListener("dragover", (dragEvent) => {
+    if (!draggedGroup) return;
+    const node = dragEvent.target.closest(".classification-manager-node");
+    if (!node) return;
+    dragEvent.preventDefault();
+    const list = node.querySelector(".classification-manager-groups");
+    list.querySelector(".classification-group-empty")?.remove();
+    const target = dragEvent.target.closest("[data-group-id]");
+    if (target && target !== draggedGroup) {
+      const before = dragEvent.clientY < target.getBoundingClientRect().top + target.offsetHeight / 2;
+      list.insertBefore(draggedGroup, before ? target : target.nextSibling);
+    } else if (!target) {
+      list.append(draggedGroup);
+    }
+  });
+  container.addEventListener("dragend", () => {
+    if (!draggedGroup) return;
+    const now = new Date().toISOString();
+    container.querySelectorAll(".classification-manager-node").forEach((node) => {
+      [...node.querySelectorAll("[data-group-id]")].forEach((row, order) => {
+        eventGroups = eventGroups.map((group) => group.id === row.dataset.groupId
+          ? { ...group, category: node.dataset.category, order, updatedAt: now }
+          : group);
+      });
+    });
+    const groupCategories = new Map(eventGroups.map((group) => [group.id, group.category]));
+    events = events.map((event) => {
+      const classifications = eventClassificationLinks(event).map((link) => groupCategories.has(link.groupId)
+        ? { ...link, category: groupCategories.get(link.groupId) }
+        : link);
+      return { ...event, classifications, category: classifications[0]?.category || "MISC" };
+    });
+    tasks = tasks.map((task) => ({
+      ...task,
+      classifications: normalizeClassificationLinks(task.classifications, task).map((link) => groupCategories.has(link.groupId)
+        ? { ...link, category: groupCategories.get(link.groupId) }
+        : link),
+      updatedAt: now
+    }));
+    draggedGroup.classList.remove("is-dragging");
+    draggedGroup = null;
+    saveEventGroups();
+    saveEvents();
+    saveTasks();
+    renderAll();
+  });
+}
+
+function groupForId(id) {
+  return eventGroups.find((group) => group.id === id) || null;
+}
+
+function groupsForCategory(category = "") {
+  const normalized = category ? normalizedCategory(category) : "";
+  return [...eventGroups]
+    .filter((group) => !normalized || group.category === normalized)
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, "ko-KR"));
+}
+
+function renderEventGroupOptions() {
+  eventGroupOptions.replaceChildren();
+  groupsForCategory(categoryInput.value).forEach((group) => {
+    const option = document.createElement("option");
+    option.value = group.name;
+    option.label = `${group.category} · ${group.name}`;
+    eventGroupOptions.append(option);
+  });
+}
+
+function ensureEventGroup(name, category) {
+  const cleanName = String(name || "").trim().slice(0, 80);
+  if (!cleanName) return null;
+  const cleanCategory = normalizedCategory(category);
+  const existing = eventGroups.find((group) => (
+    group.category === cleanCategory && group.name.toLocaleLowerCase("ko-KR") === cleanName.toLocaleLowerCase("ko-KR")
+  ));
+  if (existing) return existing;
+  const now = new Date().toISOString();
+  const group = normalizeEventGroup({ name: cleanName, category: cleanCategory, createdAt: now, updatedAt: now });
+  eventGroups.push(group);
+  return group;
+}
+
+function addClassificationInput(link = {}, focus = false) {
+  const row = element("div", "classification-row");
+  const categorySelect = document.createElement("select");
+  categorySelect.className = "classification-category";
+  categorySelect.setAttribute("aria-label", "카테고리");
+  const categories = orderedCategories();
+  const requestedCategory = normalizedCategory(link.category || categories[0] || "MISC");
+  [...new Set([...categories, requestedCategory, "MISC"])].forEach((category) => {
+    const option = document.createElement("option");
+    option.value = category;
+    option.textContent = `#${category}`;
+    categorySelect.append(option);
+  });
+  categorySelect.value = requestedCategory;
+
+  const groupInput = document.createElement("input");
+  groupInput.className = "classification-group";
+  groupInput.type = "text";
+  groupInput.placeholder = "그룹 없음";
+  groupInput.autocomplete = "off";
+  groupInput.setAttribute("aria-label", "그룹");
+  const groupListId = `classification-groups-${crypto.randomUUID()}`;
+  const dataList = document.createElement("datalist");
+  dataList.id = groupListId;
+  groupInput.setAttribute("list", groupListId);
+
+  const updateGroupChoices = () => {
+    dataList.replaceChildren();
+    groupsForCategory(categorySelect.value).forEach((group) => {
+      const option = document.createElement("option");
+      option.value = group.name;
+      dataList.append(option);
+    });
+  };
+  updateGroupChoices();
+  const linkedGroup = groupForId(link.groupId);
+  groupInput.value = linkedGroup?.name || "";
+  categorySelect.addEventListener("change", () => {
+    groupInput.value = "";
+    updateGroupChoices();
+  });
+
+  const remove = element("button", "classification-remove", "삭제");
+  remove.type = "button";
+  remove.addEventListener("click", () => {
+    row.remove();
+    if (!classificationList.childElementCount) addClassificationInput({ category: "MISC" });
+  });
+  row.append(categorySelect, groupInput, remove, dataList);
+  classificationList.append(row);
+  if (focus) categorySelect.focus({ preventScroll: true });
+}
+
+function renderClassificationInputs(links = []) {
+  classificationList.replaceChildren();
+  const normalized = normalizeClassificationLinks(links, { category: "MISC" });
+  normalized.forEach((link) => addClassificationInput(link));
+}
+
+function collectClassificationInputs() {
+  const links = [...classificationList.querySelectorAll(".classification-row")].map((row) => {
+    const category = normalizedCategory(row.querySelector(".classification-category")?.value || "MISC");
+    const groupName = row.querySelector(".classification-group")?.value.trim() || "";
+    const group = ensureEventGroup(groupName, category);
+    return { category, groupId: group?.id || "" };
+  });
+  return normalizeClassificationLinks(links, { category: "MISC" });
+}
+
+function renameEventGroup(id, requestedName) {
+  if (!requireSignIn("로그인하면 그룹을 변경할 수 있어요.")) return;
+  const group = groupForId(id);
+  const name = String(requestedName || "").trim().slice(0, 80);
+  if (!group || !name) return window.alert("새 그룹 이름을 입력해주세요.");
+  if (name !== group.name && !window.confirm(`그룹 이름을 “${name}”(으)로 바꾸면 이 그룹에 연결된 모든 일정과 할 일에 함께 표시됩니다. 변경할까요?`)) return;
+  const duplicate = eventGroups.find((item) => item.id !== id && item.category === group.category && item.name === name);
+  if (duplicate) {
+    if (!window.confirm(`이미 “${name}” 그룹이 있어요. 두 그룹을 합칠까요?`)) return;
+    events = events.map((event) => ({
+      ...event,
+      groupId: event.groupId === id ? duplicate.id : event.groupId,
+      classifications: eventClassificationLinks(event).map((link) => link.groupId === id ? { ...link, groupId: duplicate.id } : link)
+    }));
+    tasks = tasks.map((task) => ({
+      ...task,
+      groupId: task.groupId === id ? duplicate.id : task.groupId,
+      classifications: normalizeClassificationLinks(task.classifications, task).map((link) => link.groupId === id ? { ...link, groupId: duplicate.id } : link)
+    }));
+    eventGroups = eventGroups.filter((item) => item.id !== id);
+  } else {
+    eventGroups = eventGroups.map((item) => item.id === id ? { ...item, name, updatedAt: new Date().toISOString() } : item);
+  }
+  saveEventGroups();
+  saveEvents();
+  saveTasks();
+  renderAll();
+}
+
+function deleteEventGroup(id) {
+  if (!requireSignIn("로그인하면 그룹을 삭제할 수 있어요.")) return;
+  const group = groupForId(id);
+  if (!group || !window.confirm(`“${group.name}” 그룹을 삭제할까요? 일정과 할 일은 삭제되지 않아요.`)) return;
+  const now = new Date().toISOString();
+  events = events.map((event) => ({
+    ...event,
+    groupId: event.groupId === id ? "" : event.groupId,
+    classifications: eventClassificationLinks(event).map((link) => link.groupId === id ? { ...link, groupId: "" } : link)
+  }));
+  tasks = tasks.map((task) => ({
+    ...task,
+    groupId: task.groupId === id ? "" : task.groupId,
+    classifications: normalizeClassificationLinks(task.classifications, task).map((link) => link.groupId === id ? { ...link, groupId: "" } : link),
+    updatedAt: now
+  }));
+  eventGroups = eventGroups.filter((item) => item.id !== id);
+  saveEventGroups();
+  saveEvents();
+  saveTasks();
+  renderAll();
+}
+
+function renderEventGroupControls() {
+  renderEventGroupOptions();
+  groupManagerList.replaceChildren();
+  const groups = [...eventGroups].sort((a, b) => (
+    a.category.localeCompare(b.category, "ko-KR") || a.name.localeCompare(b.name, "ko-KR")
+  ));
+  groups.forEach((group) => {
+    const row = element("div", "group-manager-row");
+    const category = element("span", "group-manager-category", group.category);
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = group.name;
+    input.setAttribute("aria-label", `${group.name} 그룹 새 이름`);
+    const save = element("button", "", "변경");
+    save.type = "button";
+    save.addEventListener("click", () => renameEventGroup(group.id, input.value));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        renameEventGroup(group.id, input.value);
+      }
+    });
+    const remove = element("button", "group-manager-delete", "삭제");
+    remove.type = "button";
+    remove.addEventListener("click", () => deleteEventGroup(group.id));
+    row.append(category, input, save, remove);
+    groupManagerList.append(row);
+  });
+  if (!groups.length) groupManagerList.append(element("span", "category-manager-empty", "그룹을 지정한 일정을 저장하면 여기에 생겨요."));
 }
 
 function renderCategoryMenu(categories = orderedCategories()) {
@@ -2622,6 +3296,7 @@ function renderCategoryMenu(categories = orderedCategories()) {
     option.append(check, element("span", "", category));
     option.addEventListener("click", () => {
       categoryInput.value = category;
+      renderEventGroupOptions();
       categoryInput.focus({ preventScroll: true });
       closeCategoryMenu();
     });
@@ -2647,6 +3322,7 @@ function setupCategoryDragSorting(container) {
   container.dataset.dragReady = "true";
 
   container.addEventListener("dragstart", (dragEvent) => {
+    if (dragEvent.target.closest("[data-group-id]")) return;
     const item = dragEvent.target.closest("[data-category]");
     if (!item || !container.contains(item)) return;
     if (!requireSignIn("로그인하면 카테고리 순서를 변경할 수 있어요.")) {
@@ -2722,9 +3398,17 @@ function taskLinkedEvent(task) {
   return events.find((event) => event.id === task.eventId) || null;
 }
 
+function taskLinkedGroup(task) {
+  return groupForId(task.groupId);
+}
+
 function taskRelevantDates(task) {
   const linked = taskLinkedEvent(task);
-  return [...new Set([task.dueDate, linked?.date].filter(Boolean))];
+  const groupIds = new Set(taskClassificationLinks(task).map((link) => link.groupId).filter(Boolean));
+  const groupDates = groupIds.size
+    ? events.filter((event) => eventClassificationLinks(event).some((link) => groupIds.has(link.groupId))).map((event) => event.date)
+    : [];
+  return [...new Set([task.dueDate, linked?.date, ...groupDates].filter(Boolean))];
 }
 
 function taskMatchesCalendar(task) {
@@ -2757,7 +3441,10 @@ function taskSortValue(task) {
 
 function todoTaskItem(todo, options = {}) {
   const event = taskLinkedEvent(todo);
-  const item = element("div", `task-item task-record${todo.completed ? " is-done" : ""}`);
+  const group = taskLinkedGroup(todo);
+  const depth = Math.max(0, Number(options.depth) || 0);
+  const item = element("div", `task-item task-record${todo.completed ? " is-done" : ""}${depth ? " is-child" : ""}`);
+  item.style.setProperty("--task-depth", String(depth));
   const label = element("div", "task-check");
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
@@ -2771,6 +3458,7 @@ function todoTaskItem(todo, options = {}) {
     : "기한 없음";
   const todoScheduleLine = element("span");
   if (event) todoScheduleLine.append(document.createTextNode(`${event.title} · `));
+  else if (group) todoScheduleLine.append(document.createTextNode(`${group.name} 그룹 · `));
   if (todo.dueDate) {
     todoScheduleLine.append(
       viewDate(todo.dueDate),
@@ -2787,7 +3475,8 @@ function todoTaskItem(todo, options = {}) {
 
   const pills = element("span", "task-pills");
   if (todo.submissionRequired) pills.append(element("span", "submission-pill", "제출 필요"));
-  if (event) pills.append(element("span", "category-pill", event.category));
+  if (todo.repeatSeriesId) pills.append(element("span", "group-pill", "반복"));
+  if (event || group) pills.append(element("span", "category-pill", event?.category || group.category));
   if (options.archived) pills.append(element("span", "task-archive-pill", todo.archivedAt ? "보관" : "완료"));
   item.append(label, pills);
   item.addEventListener("click", (clickEvent) => {
@@ -2795,6 +3484,28 @@ function todoTaskItem(todo, options = {}) {
     openTaskPanel(todo.id);
   });
   return item;
+}
+
+function hierarchicalTasks(list) {
+  const byParent = new Map();
+  const ids = new Set(list.map((task) => task.id));
+  list.forEach((task) => {
+    const parentId = task.parentTaskId && ids.has(task.parentTaskId) ? task.parentTaskId : "";
+    if (!byParent.has(parentId)) byParent.set(parentId, []);
+    byParent.get(parentId).push(task);
+  });
+  byParent.forEach((children) => children.sort((a, b) => taskSortValue(a).localeCompare(taskSortValue(b))));
+  const ordered = [];
+  const visit = (parentId, depth, visited = new Set()) => {
+    (byParent.get(parentId) || []).forEach((task) => {
+      if (visited.has(task.id)) return;
+      const nextVisited = new Set(visited).add(task.id);
+      ordered.push({ task, depth });
+      visit(task.id, depth + 1, nextVisited);
+    });
+  };
+  visit("", 0);
+  return ordered;
 }
 
 function cancellationTaskItem(event) {
@@ -2820,7 +3531,8 @@ function cancellationTaskItem(event) {
 
 function renderTasks() {
   tasksView.replaceChildren();
-  const visibleEvents = events.filter((event) => dateMatchesActiveFilter(event.date));
+  tasksView.append(renderClassificationFilterToolbar());
+  const visibleEvents = events.filter((event) => dateMatchesActiveFilter(event.date) && eventMatchesClassificationFilter(event));
   const reservationTasks = sortEvents(visibleEvents.filter((event) => inferredReservationStatus(event) === "needed"));
   const cancellationTasks = [...visibleEvents]
     .filter((event) => inferredReservationStatus(event) === "considering")
@@ -2842,8 +3554,8 @@ function renderTasks() {
     return;
   }
 
-  const activeTasks = tasks.filter((task) => !task.completed && !task.archivedAt && taskMatchesCalendar(task)).sort((a, b) => taskSortValue(a).localeCompare(taskSortValue(b)));
-  const recentTasks = tasks.filter((task) => isRecentlyCompletedTask(task) && taskMatchesCalendar(task)).sort((a, b) => String(b.completedAt).localeCompare(String(a.completedAt)));
+  const activeTasks = tasks.filter((task) => !task.completed && !task.archivedAt && taskMatchesCalendar(task) && taskMatchesClassificationFilter(task)).sort((a, b) => taskSortValue(a).localeCompare(taskSortValue(b)));
+  const recentTasks = tasks.filter((task) => isRecentlyCompletedTask(task) && taskMatchesCalendar(task) && taskMatchesClassificationFilter(task)).sort((a, b) => String(b.completedAt).localeCompare(String(a.completedAt)));
 
   {
     const section = element("section", "task-section");
@@ -2855,7 +3567,7 @@ function renderTasks() {
     title.append(element("h2", "", "To Do"), newButton);
     section.append(title);
     const list = element("div", "task-list");
-    activeTasks.forEach((task) => list.append(todoTaskItem(task)));
+    hierarchicalTasks(activeTasks).forEach(({ task, depth }) => list.append(todoTaskItem(task, { depth })));
     if (activeTasks.length) {
       section.append(list);
     } else {
@@ -2870,7 +3582,7 @@ function renderTasks() {
     title.append(element("h2", "", "최근 완료"), recentCompletedSetting());
     section.append(title);
     const list = element("div", "task-list");
-    recentTasks.forEach((task) => list.append(todoTaskItem(task)));
+    hierarchicalTasks(recentTasks).forEach(({ task, depth }) => list.append(todoTaskItem(task, { depth })));
     section.append(list);
     tasksView.append(section);
   } else {
@@ -2977,8 +3689,10 @@ function renderTaskArchive() {
 
   const needle = archiveTaskQuery.toLocaleLowerCase("ko-KR");
   const archived = tasks.filter(isArchivedTask).filter((task) => {
+    if (!taskMatchesClassificationFilter(task)) return false;
     const event = taskLinkedEvent(task);
-    if (needle && ![task.title, task.memo, event?.title].filter(Boolean).join(" ").toLocaleLowerCase("ko-KR").includes(needle)) return false;
+    const group = taskLinkedGroup(task);
+    if (needle && ![task.title, task.memo, event?.title, group?.name, group?.category].filter(Boolean).join(" ").toLocaleLowerCase("ko-KR").includes(needle)) return false;
     if (archiveTaskStatus === "completed" && !task.completed) return false;
     if (archiveTaskStatus === "open" && task.completed) return false;
     if (archiveTaskStartDate || archiveTaskEndDate) {
@@ -2995,7 +3709,7 @@ function renderTaskArchive() {
     return;
   }
   const list = element("div", "task-list task-archive-list");
-  archived.forEach((task) => list.append(todoTaskItem(task, { archived: true })));
+  hierarchicalTasks(archived).forEach(({ task, depth }) => list.append(todoTaskItem(task, { archived: true, depth })));
   tasksView.append(list);
 }
 
@@ -3372,9 +4086,19 @@ function clearFormValues() {
   clearAllLocationSearchResults();
   form.reset();
   document.querySelector("#eventId").value = "";
+  eventGroupInput.value = "";
+  renderClassificationInputs([{ category: "MISC", groupId: "" }]);
+  eventRepeatInput.checked = false;
+  recurrenceFrequency.value = "weekly";
+  recurrenceInterval.value = "1";
+  recurrenceEndDate.value = "";
+  recurrenceWeekdays.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = false; });
+  setRecurrenceEditingState();
   renderTodoInputs();
   syncLocationFields();
   syncConditionalFields();
+  syncEventRecurrenceFields();
+  renderEventGroupOptions();
 }
 
 function applyFormMode(mode) {
@@ -3388,7 +4112,7 @@ function applyFormMode(mode) {
   taskForm.hidden = !isTask;
   formPlaceholder.hidden = !isIdle;
   form.classList.toggle("is-viewing", isViewing);
-  saveButton.hidden = isIdle || isViewing;
+  saveButton.hidden = isIdle || isViewing || isTask;
   newEventButton.hidden = isCreating || mode === "edit" || isTask;
   cancelEditButton.hidden = isIdle || isViewing;
   cancelEditButton.textContent = isTask ? "닫기" : "취소";
@@ -3466,6 +4190,16 @@ function showEventInForm(id, mode = "view") {
   clearAllLocationSearchResults();
   document.querySelector("#url").value = event.url || "";
   document.querySelector("#category").value = event.category || "ETC";
+  eventGroupInput.value = groupForId(event.groupId)?.name || "";
+  renderClassificationInputs(event.classifications);
+  eventRepeatInput.checked = Boolean(event.recurrenceSeriesId && event.recurrenceRule);
+  recurrenceFrequency.value = event.recurrenceRule?.frequency || "weekly";
+  recurrenceInterval.value = String(event.recurrenceRule?.interval || 1);
+  recurrenceEndDate.value = event.recurrenceRule?.endDate || "";
+  recurrenceWeekdays.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.checked = Boolean(event.recurrenceRule?.weekdays?.includes(Number(input.value)));
+  });
+  setRecurrenceEditingState(event);
   document.querySelector("#notes").value = event.notes || "";
   const reservationStatus = inferredReservationStatus(event);
   document.querySelector(`input[name="reservationStatus"][value="${reservationStatus}"]`).checked = true;
@@ -3477,6 +4211,8 @@ function showEventInForm(id, mode = "view") {
 
   syncLocationFields();
   syncConditionalFields();
+  syncEventRecurrenceFields();
+  renderEventGroupOptions();
   applyFormMode(mode);
 }
 
@@ -3516,22 +4252,99 @@ function deleteEvent(id) {
   renderAll();
 }
 
-function populateTaskEventOptions(selectedId = "") {
+function populateTaskEventOptions(task = null) {
   taskEventSelect.replaceChildren();
   const none = document.createElement("option");
   none.value = "";
   none.textContent = "연결 안 함";
   taskEventSelect.append(none);
-  sortEvents(events).forEach((event) => {
+
+  if (eventGroups.length) {
+    const groupOptions = document.createElement("optgroup");
+    groupOptions.label = "그룹";
+    [...eventGroups].sort((a, b) => a.name.localeCompare(b.name, "ko-KR")).forEach((group) => {
+      const option = document.createElement("option");
+      option.value = `group:${group.id}`;
+      option.textContent = `${group.name} · ${group.category}`;
+      groupOptions.append(option);
+    });
+    taskEventSelect.append(groupOptions);
+  }
+
+  const yesterday = dateInputValue(new Date(Date.now() - 86400000));
+  const linkedEventId = task?.eventId || "";
+  const eventOptions = document.createElement("optgroup");
+  eventOptions.label = "개별 일정 · 어제 이후";
+  sortEvents(events.filter((event) => event.date >= yesterday || event.id === linkedEventId)).forEach((event) => {
     const option = document.createElement("option");
-    option.value = event.id;
+    option.value = `event:${event.id}`;
     option.textContent = `${compactDate(event.date)} · ${event.title}`;
-    taskEventSelect.append(option);
+    eventOptions.append(option);
   });
-  taskEventSelect.value = selectedId;
+  taskEventSelect.append(eventOptions);
+  taskEventSelect.value = task?.groupId
+    ? `group:${task.groupId}`
+    : task?.eventId ? `event:${task.eventId}` : "";
 }
 
-function openTaskPanel(id = null) {
+function populateTaskParentOptions(task = null) {
+  taskParentSelect.replaceChildren();
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "상위 항목 없음";
+  taskParentSelect.append(none);
+  const excludedIds = new Set([task?.id].filter(Boolean));
+  if (task) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      tasks.forEach((item) => {
+        if (item.parentTaskId && excludedIds.has(item.parentTaskId) && !excludedIds.has(item.id)) {
+          excludedIds.add(item.id);
+          changed = true;
+        }
+      });
+    }
+  }
+  tasks
+    .filter((item) => !excludedIds.has(item.id) && !isArchivedTask(item))
+    .sort((a, b) => taskSortValue(a).localeCompare(taskSortValue(b)))
+    .forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.title;
+      taskParentSelect.append(option);
+    });
+  taskParentSelect.value = task?.parentTaskId || "";
+}
+
+function currentTaskRepeatRule() {
+  return {
+    frequency: taskRepeatFrequency.value,
+    interval: Math.max(1, Number(taskRepeatInterval.value) || 1),
+    weekdays: [...taskRepeatWeekdays.querySelectorAll('input[type="checkbox"]:checked')].map((input) => Number(input.value)),
+    endDate: taskRepeatEndDate.value
+  };
+}
+
+function syncTaskRepeatFields({ initialize = false } = {}) {
+  const active = taskRepeatInput.checked;
+  taskRepeatOptions.hidden = !active;
+  taskRepeatEndDate.required = active;
+  taskRepeatWeekdays.hidden = taskRepeatFrequency.value !== "weekly";
+  if (!active || !initialize) return;
+  if (taskDueDateInput.value && !taskRepeatEndDate.value) {
+    const start = new Date(`${taskDueDateInput.value}T00:00:00`);
+    taskRepeatEndDate.value = dateInputValue(new Date(start.getFullYear(), start.getMonth() + 3, start.getDate()));
+  }
+  if (taskDueDateInput.value && taskRepeatFrequency.value === "weekly" && !taskRepeatWeekdays.querySelector('input:checked')) {
+    const weekday = new Date(`${taskDueDateInput.value}T00:00:00`).getDay();
+    const checkbox = taskRepeatWeekdays.querySelector(`input[value="${weekday}"]`);
+    if (checkbox) checkbox.checked = true;
+  }
+}
+
+function openTaskPanel(id = null, options = {}) {
   if (!requireSignIn("로그인하면 할 일을 추가하거나 변경할 수 있어요.")) return;
   const task = id ? tasks.find((item) => item.id === id) : null;
   selectedEventId = null;
@@ -3540,8 +4353,19 @@ function openTaskPanel(id = null) {
   taskDueDateInput.value = task?.dueDate || "";
   taskDueTimeInput.value = task?.dueTime || "";
   taskSubmissionInput.checked = Boolean(task?.submissionRequired);
+  taskRepeatInput.checked = Boolean(task?.repeatSeriesId && task?.repeatRule);
+  taskRepeatFrequency.value = task?.repeatRule?.frequency || "weekly";
+  taskRepeatInterval.value = String(task?.repeatRule?.interval || 1);
+  taskRepeatEndDate.value = task?.repeatRule?.endDate || "";
+  taskRepeatWeekdays.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.checked = Boolean(task?.repeatRule?.weekdays?.includes(Number(input.value)));
+  });
+  syncTaskRepeatFields();
   taskMemoInput.value = task?.memo || "";
-  populateTaskEventOptions(task?.eventId || "");
+  populateTaskEventOptions(task);
+  populateTaskParentOptions(task);
+  if (!task && options.parentTaskId) taskParentSelect.value = options.parentTaskId;
+  taskChildButton.hidden = !task;
   taskArchiveButton.hidden = !task;
   taskDeleteButton.hidden = !task;
   taskArchiveButton.textContent = task && isArchivedTask(task) ? "보관 해제" : "보관";
@@ -3593,11 +4417,25 @@ function renameCategory(oldName, requestedName) {
   }
   if (newName === oldName) return;
 
-  const willMerge = events.some((event) => event.category === newName);
+  if (!window.confirm(`카테고리 이름을 “${newName}”(으)로 바꾸면 연결된 모든 그룹·일정·할 일에 일괄 적용됩니다. 변경할까요?`)) return;
+
+  const willMerge = currentCategories().some((category) => category === newName && category !== oldName);
   if (willMerge && !window.confirm(`이미 “${newName}” 카테고리가 있어요. 두 카테고리를 합칠까요?`)) return;
 
   const wasSelected = selectedCategories.has(oldName) || selectedCategories.has(newName);
-  events = events.map((event) => event.category === oldName ? { ...event, category: newName } : event);
+  events = events.map((event) => {
+    const classifications = eventClassificationLinks(event).map((link) => link.category === oldName ? { ...link, category: newName } : link);
+    return {
+      ...event,
+      category: event.category === oldName ? newName : event.category,
+      classifications: normalizeClassificationLinks(classifications, event)
+    };
+  });
+  tasks = tasks.map((task) => ({
+    ...task,
+    classifications: normalizeClassificationLinks(task.classifications, task).map((link) => link.category === oldName ? { ...link, category: newName } : link)
+  }));
+  eventGroups = eventGroups.map((group) => group.category === oldName ? { ...group, category: newName, updatedAt: new Date().toISOString() } : group);
   categoryOrder = categoryOrder
     .map((category) => category === oldName ? newName : category)
     .filter((category, index, list) => list.indexOf(category) === index);
@@ -3607,6 +4445,54 @@ function renameCategory(oldName, requestedName) {
     document.querySelector("#category").value = newName;
   }
   saveEvents();
+  saveTasks();
+  saveEventGroups();
+  saveCategoryOrder();
+  renderAll();
+}
+
+function deleteCategory(category) {
+  if (!requireSignIn("로그인하면 카테고리를 삭제할 수 있어요.")) return;
+  if (category === "MISC") {
+    window.alert("MISC는 분류가 지정되지 않은 항목에 쓰이는 기본 카테고리라 삭제할 수 없어요.");
+    return;
+  }
+  if (!window.confirm(`“${category}” 카테고리를 삭제할까요?\n\n연결된 그룹·일정·할 일은 삭제되지 않고 MISC로 이동합니다.`)) return;
+
+  const now = new Date().toISOString();
+  eventGroups = eventGroups.map((group) => group.category === category
+    ? { ...group, category: "MISC", updatedAt: now }
+    : group);
+  events = events.map((event) => {
+    const classifications = eventClassificationLinks(event).map((link) => link.category === category
+      ? { ...link, category: "MISC" }
+      : link);
+    const normalized = normalizeClassificationLinks(classifications, { category: "MISC" });
+    return {
+      ...event,
+      category: event.category === category ? normalized[0]?.category || "MISC" : event.category,
+      classifications: normalized
+    };
+  });
+  tasks = tasks.map((task) => ({
+    ...task,
+    classifications: normalizeClassificationLinks(
+      taskClassificationLinks(task).map((link) => link.category === category ? { ...link, category: "MISC" } : link),
+      { category: "MISC", groupId: task.groupId }
+    ),
+    updatedAt: now
+  }));
+  categoryOrder = categoryOrder
+    .filter((item) => item !== category)
+    .filter((item, index, list) => list.indexOf(item) === index);
+  if (!categoryOrder.includes("MISC")) categoryOrder.push("MISC");
+  selectedCategories.delete(category);
+  selectedCategories.add("MISC");
+  excludedClassificationKeys.clear();
+  classificationAllCleared = false;
+  saveEventGroups();
+  saveEvents();
+  saveTasks();
   saveCategoryOrder();
   renderAll();
 }
@@ -3630,6 +4516,13 @@ form.addEventListener("submit", (submitEvent) => {
   const destinationLocation = isTravel ? selectedDestinationLocation?.name || destinationLocationInput.value.trim() : "";
   const location = isTravel ? destinationLocation : locationType === "offline" ? selectedLocation?.name || typedLocation : "";
   const url = !isTravel && locationType === "online" ? normalizeUrl(document.querySelector("#url").value) : "";
+  const classifications = collectClassificationInputs();
+  const category = classifications[0]?.category || "MISC";
+  const existingSeriesMaster = existingEvent ? recurrenceMasterFor(existingEvent) : null;
+  const editingNonMasterInstance = Boolean(existingEvent?.recurrenceSeriesId && existingSeriesMaster?.id !== existingEvent.id);
+  const repeatRule = editingNonMasterInstance
+    ? existingEvent.recurrenceRule
+    : eventRepeatInput.checked ? currentEventRecurrenceRule() : null;
 
   if (startTime === null || endTime === null || cancellationDeadlineTime === null) {
     window.alert("시간은 24시간제로 입력해주세요. 예: 09:00, 16:30");
@@ -3661,6 +4554,28 @@ form.addEventListener("submit", (submitEvent) => {
     return;
   }
 
+  if (repeatRule && (!repeatRule.endDate || repeatRule.endDate < document.querySelector("#date").value)) {
+    window.alert("반복 일정의 종료일은 시작 날짜 이후로 선택해주세요.");
+    return;
+  }
+
+  if (repeatRule?.frequency === "weekly" && !repeatRule.weekdays.length) {
+    window.alert("매주 반복할 요일을 하나 이상 선택해주세요.");
+    return;
+  }
+
+  let group = groupForId(classifications[0]?.groupId);
+  if (repeatRule && !group) {
+    group = ensureEventGroup(document.querySelector("#title").value.trim(), category);
+    classifications[0] = { category, groupId: group.id };
+  }
+  const recurrenceSeriesId = repeatRule
+    ? existingEvent?.recurrenceSeriesId || crypto.randomUUID()
+    : "";
+  const recurrenceMasterId = repeatRule
+    ? existingEvent?.recurrenceMasterId || existingSeriesMaster?.id || ""
+    : "";
+
   const event = {
     id: id || crypto.randomUUID(),
     title: document.querySelector("#title").value.trim(),
@@ -3685,7 +4600,13 @@ form.addEventListener("submit", (submitEvent) => {
     destinationLatitude: isTravel ? selectedDestinationLocation?.latitude ?? null : null,
     destinationLongitude: isTravel ? selectedDestinationLocation?.longitude ?? null : null,
     url,
-    category: normalizedCategory(document.querySelector("#category").value),
+    category,
+    groupId: group?.id || "",
+    classifications,
+    recurrenceSeriesId,
+    recurrenceMasterId,
+    recurrenceException: existingEvent?.recurrenceException || false,
+    recurrenceRule: repeatRule,
     notes: document.querySelector("#notes").value.trim(),
     reservationStatus,
     reservationRequired: reservationStatus !== "none",
@@ -3708,13 +4629,89 @@ form.addEventListener("submit", (submitEvent) => {
     return;
   }
 
-  if (id) {
-    events = events.map((item) => item.id === id ? event : item);
+  const shouldGenerateSeries = Boolean(repeatRule && !existingEvent?.recurrenceSeriesId);
+  const seriesDates = shouldGenerateSeries
+    ? [...new Set([event.date, ...recurrenceDates(event.date, repeatRule)])].sort()
+    : [event.date];
+  const instances = seriesDates.map((date, index) => ({
+    ...event,
+    id: index === 0 ? event.id : crypto.randomUUID(),
+    date,
+    recurrenceMasterId: repeatRule ? recurrenceMasterId || event.id : "",
+    createdAt: index === 0 ? event.createdAt : new Date().toISOString()
+  }));
+
+  if (id && existingEvent?.recurrenceSeriesId) {
+    const master = recurrenceMasterFor(existingEvent);
+    const isMaster = master.id === existingEvent.id;
+    const sharedChanged = recurringSharedChanged(existingEvent, event);
+    const applyToFollowing = sharedChanged && window.confirm(
+      "반복 일정입니다. 이 일정 이후의 모든 일정에 변경사항을 일괄 적용할까요?\n\n취소를 누르면 이 일정만 변경됩니다."
+    );
+
+    events = events.map((item) => {
+      if (item.id === id) return { ...event, recurrenceException: sharedChanged && !applyToFollowing && !isMaster };
+      if (applyToFollowing && item.recurrenceSeriesId === existingEvent.recurrenceSeriesId && item.date >= existingEvent.date && !item.recurrenceException) {
+        return copyRecurringSharedFields(item, event);
+      }
+      return item;
+    });
+
+    if (isMaster && !repeatRule) {
+      events = events.map((item) => item.recurrenceSeriesId === existingEvent.recurrenceSeriesId
+        ? {
+            ...item,
+            recurrenceSeriesId: "",
+            recurrenceMasterId: "",
+            recurrenceException: false,
+            recurrenceRule: null
+          }
+        : item);
+    } else if (isMaster && repeatRule) {
+      const desiredDates = new Set(recurrenceDates(event.date, repeatRule));
+      const removedIds = events
+        .filter((item) => item.recurrenceSeriesId === event.recurrenceSeriesId && !desiredDates.has(item.date) && !item.recurrenceException)
+        .map((item) => item.id);
+      events = events.filter((item) => !removedIds.includes(item.id));
+      const datesInSeries = new Set(events.filter((item) => item.recurrenceSeriesId === event.recurrenceSeriesId).map((item) => item.date));
+      desiredDates.forEach((date) => {
+        if (datesInSeries.has(date)) return;
+        events.push({
+          ...event,
+          id: crypto.randomUUID(),
+          date,
+          recurrenceMasterId: event.id,
+          recurrenceException: false,
+          travelPlan: null,
+          createdAt: new Date().toISOString()
+        });
+      });
+      events = events.map((item) => item.recurrenceSeriesId === event.recurrenceSeriesId
+        ? { ...item, recurrenceRule: repeatRule, recurrenceMasterId: event.id }
+        : item);
+      const now = new Date().toISOString();
+      tasks = tasks.map((task) => removedIds.includes(task.eventId) ? { ...task, eventId: "", updatedAt: now } : task);
+    }
   } else {
-    events.push(event);
+    if (id) events = events.map((item) => item.id === id ? instances[0] : item);
+    else events.push(instances[0]);
+    if (instances.length > 1) events.push(...instances.slice(1));
   }
 
-  syncEventTasks(event.id, todoResult.todos);
+  instances.forEach((instance, index) => {
+    syncEventTasks(instance.id, index === 0 ? todoResult.todos : []);
+  });
+  tasks = tasks.map((task) => {
+    const linkedEvent = events.find((item) => item.id === task.eventId);
+    return linkedEvent
+      ? {
+          ...task,
+          groupId: linkedEvent.groupId || "",
+          classifications: eventClassificationLinks(linkedEvent)
+        }
+      : task;
+  });
+  saveEventGroups();
   saveEvents();
   saveTasks();
   selectedEventId = event.id;
@@ -3727,6 +4724,7 @@ form.addEventListener("submit", (submitEvent) => {
 
 reservationStatusInputs.forEach((input) => input.addEventListener("change", syncConditionalFields));
 addTodoButton.addEventListener("click", () => addTodoInput({}, true));
+addClassificationButton.addEventListener("click", () => addClassificationInput({ category: orderedCategories()[0] || "MISC" }, true));
 newEventButton.addEventListener("click", startNewEvent);
 cancelEditButton.addEventListener("click", cancelFormEditing);
 calendarPrevButton.addEventListener("click", () => shiftCalendarMonth(-1));
@@ -3814,7 +4812,10 @@ homeLocationRemoveButton.addEventListener("click", () => {
 });
 categoryInput.addEventListener("focus", openCategoryMenu);
 categoryInput.addEventListener("click", openCategoryMenu);
-categoryInput.addEventListener("input", () => renderCategoryMenu());
+categoryInput.addEventListener("input", () => {
+  renderCategoryMenu();
+  renderEventGroupOptions();
+});
 categoryInput.addEventListener("keydown", (keyEvent) => {
   if (keyEvent.key === "Escape") {
     closeCategoryMenu();
@@ -3841,6 +4842,11 @@ document.querySelectorAll('input[name="locationType"]').forEach((input) => {
 });
 document.querySelectorAll('input[name="eventKind"]').forEach((input) => {
   input.addEventListener("change", syncLocationFields);
+});
+eventRepeatInput.addEventListener("change", () => syncEventRecurrenceFields({ initialize: true }));
+recurrenceFrequency.addEventListener("change", () => syncEventRecurrenceFields({ initialize: true }));
+document.querySelector("#date").addEventListener("change", () => {
+  if (eventRepeatInput.checked) syncEventRecurrenceFields({ initialize: true });
 });
 
 form.addEventListener("click", (clickEvent) => {
@@ -3947,26 +4953,76 @@ taskForm.addEventListener("submit", (submitEvent) => {
   }
   const now = new Date().toISOString();
   const existing = selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) : null;
+  const linkedValue = taskEventSelect.value;
+  const eventId = linkedValue.startsWith("event:") ? linkedValue.slice(6) : "";
+  const groupId = linkedValue.startsWith("group:") ? linkedValue.slice(6) : "";
+  const linkedEvent = events.find((event) => event.id === eventId);
+  const linkedGroup = groupForId(groupId);
+  const classifications = linkedEvent
+    ? eventClassificationLinks(linkedEvent)
+    : linkedGroup
+      ? [{ category: linkedGroup.category, groupId: linkedGroup.id }]
+      : existing?.classifications || [{ category: "MISC", groupId: "" }];
+  const repeatRule = taskRepeatInput.checked ? currentTaskRepeatRule() : null;
+  if (repeatRule && (!taskDueDateInput.value || !repeatRule.endDate || repeatRule.endDate < taskDueDateInput.value)) {
+    window.alert("반복 To Do에는 시작할 완료 기한과 그 이후의 반복 종료일이 필요해요.");
+    return;
+  }
+  if (repeatRule?.frequency === "weekly" && !repeatRule.weekdays.length) {
+    window.alert("매주 반복할 요일을 하나 이상 선택해주세요.");
+    return;
+  }
+  const repeatSeriesId = repeatRule ? existing?.repeatSeriesId || crypto.randomUUID() : "";
   const task = normalizeTask({
     ...existing,
     id: existing?.id || crypto.randomUUID(),
     title,
     dueDate: taskDueDateInput.value,
     dueTime,
-    eventId: taskEventSelect.value,
+    eventId,
+    groupId,
+    classifications,
+    parentTaskId: taskParentSelect.value,
+    repeatSeriesId,
+    repeatRule,
     submissionRequired: taskSubmissionInput.checked,
     memo: taskMemoInput.value.trim(),
     createdAt: existing?.createdAt || now,
     updatedAt: now
   });
-  tasks = existing ? tasks.map((item) => item.id === task.id ? task : item) : [...tasks, task];
+  const shouldGenerateSeries = Boolean(repeatRule && !existing?.repeatSeriesId);
+  const dates = shouldGenerateSeries
+    ? [...new Set([task.dueDate, ...recurrenceDates(task.dueDate, repeatRule)])].sort()
+    : [task.dueDate];
+  const instances = dates.map((dueDate, index) => normalizeTask({
+    ...task,
+    id: index === 0 ? task.id : crypto.randomUUID(),
+    dueDate,
+    completed: index === 0 ? task.completed : false,
+    completedAt: index === 0 ? task.completedAt : "",
+    archivedAt: index === 0 ? task.archivedAt : "",
+    createdAt: index === 0 ? task.createdAt : now,
+    updatedAt: now
+  }));
+  tasks = existing ? tasks.map((item) => item.id === task.id ? instances[0] : item) : [...tasks, instances[0]];
+  if (instances.length > 1) tasks.push(...instances.slice(1));
   saveTasks();
   renderAll();
   openTaskPanel(task.id);
 });
+taskRepeatInput.addEventListener("change", () => syncTaskRepeatFields({ initialize: true }));
+taskRepeatFrequency.addEventListener("change", () => syncTaskRepeatFields({ initialize: true }));
+taskDueDateInput.addEventListener("change", () => {
+  if (taskRepeatInput.checked) syncTaskRepeatFields({ initialize: true });
+});
 taskDueTimeInput.addEventListener("blur", () => {
   const normalized = normalizeTime(taskDueTimeInput.value);
   if (normalized !== null) taskDueTimeInput.value = normalized;
+});
+taskChildButton.addEventListener("click", () => {
+  const parentTaskId = selectedTaskId;
+  if (!parentTaskId) return;
+  openTaskPanel(null, { parentTaskId });
 });
 taskArchiveButton.addEventListener("click", () => {
   const task = tasks.find((item) => item.id === selectedTaskId);
@@ -4136,6 +5192,20 @@ window.addEventListener("message", (messageEvent) => {
 
 calendarFilterResetButton.addEventListener("click", resetCalendarDateFilter);
 
+categoryManagerEditButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  if (!categoryManager.open) return;
+  classificationManagerEditing = !classificationManagerEditing;
+  renderCategoryControls();
+});
+
+categoryManager.addEventListener("toggle", () => {
+  if (categoryManager.open || !classificationManagerEditing) return;
+  classificationManagerEditing = false;
+  renderCategoryControls();
+});
+
 clearButton.addEventListener("click", () => {
   if (!requireSignIn("로그인하면 내 데이터를 관리할 수 있어요.")) return;
   if ((!events.length && !notes.length && !tasks.length) || !window.confirm("저장된 일정, 할 일과 노트를 모두 삭제할까요? 이 작업은 되돌릴 수 없어요.")) return;
@@ -4143,19 +5213,21 @@ clearButton.addEventListener("click", () => {
   tasks = [];
   notes = [];
   categoryOrder = [];
+  eventGroups = [];
   selectedCategories.clear();
   selectedNoteId = null;
   saveEvents();
   saveTasks();
   saveNotes();
   saveCategoryOrder();
+  saveEventGroups();
   showIdleForm();
   renderAll();
 });
 
 exportButton.addEventListener("click", () => {
   if (!requireSignIn("로그인하면 내 데이터를 백업할 수 있어요.")) return;
-  const backup = { version: 9, events, tasks, taskSettings, categoryOrder, notes, homeLocation, homeVisible };
+  const backup = { version: 11, events, tasks, taskSettings, categoryOrder, eventGroups, notes, homeLocation, homeVisible };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -4192,6 +5264,7 @@ importInput.addEventListener("change", async () => {
     events = events.map((event) => ({ ...event, todos: [] }));
     taskSettings = normalizeTaskSettings(imported.taskSettings);
     categoryOrder = Array.isArray(imported.categoryOrder) ? imported.categoryOrder : [];
+    eventGroups = Array.isArray(imported.eventGroups) ? imported.eventGroups.map(normalizeEventGroup).filter((group) => group.name) : [];
     notes = Array.isArray(imported.notes) ? imported.notes.map(normalizeNote) : [];
     selectedCategories = new Set(events.map((event) => event.category));
     selectedNoteId = null;
@@ -4200,6 +5273,7 @@ importInput.addEventListener("change", async () => {
     saveTaskSettings();
     saveNotes();
     saveCategoryOrder();
+    saveEventGroups();
     showIdleForm();
     renderAll();
   } catch (error) {
