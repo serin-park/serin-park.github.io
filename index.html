@@ -136,6 +136,7 @@
           <div class="form-header-actions">
             <button class="text-button" id="newEventButton" type="button">새 일정</button>
             <button class="text-button" id="cancelEditButton" type="button" hidden>취소</button>
+            <button class="primary-button header-save-button" id="saveButton" type="submit" form="eventForm">일정 저장</button>
           </div>
         </div>
         <div class="form-placeholder" id="formPlaceholder">
@@ -146,17 +147,35 @@
         <form id="eventForm" hidden>
           <input id="eventId" type="hidden">
 
-          <div class="ios-main-row">
+          <div class="ios-main-row title-only-row">
             <label class="ios-standalone-field title-field">
               <input id="title" name="title" type="text" placeholder="일정명" aria-label="일정명 (필수)" required>
             </label>
+          </div>
 
+          <div class="classification-editor">
+            <div class="classification-editor-header">
+              <span>분류</span>
+              <button class="text-button" id="addClassificationButton" type="button">+ 분류 추가</button>
+            </div>
+            <div class="classification-list" id="classificationList"></div>
+          </div>
+
+          <div class="legacy-classification-fields" hidden>
             <div class="category-picker">
               <input id="category" name="category" type="text" placeholder="카테고리" aria-label="카테고리" autocomplete="off" aria-haspopup="listbox" aria-expanded="false" aria-controls="categoryMenu">
               <button class="category-menu-toggle" id="categoryMenuButton" type="button" aria-label="카테고리 목록 열기" tabindex="-1">
                 <span class="category-menu-chevron" aria-hidden="true"></span>
               </button>
               <div class="category-menu" id="categoryMenu" role="listbox" hidden></div>
+            </div>
+            <div class="event-group-row">
+              <label>
+                <span>그룹</span>
+                <input id="eventGroupInput" type="text" list="eventGroupOptions" placeholder="선택 또는 새 그룹 입력" autocomplete="off">
+                <datalist id="eventGroupOptions"></datalist>
+              </label>
+              <span>관련 일정들을 함께 묶어 관리해요.</span>
             </div>
           </div>
 
@@ -177,9 +196,15 @@
           </div>
 
           <div class="ios-form-group ios-date-group">
-            <label class="compact-date-field">
-              <input id="date" name="date" type="date" aria-label="날짜 (필수)" required>
-            </label>
+            <div class="date-repeat-control">
+              <label class="compact-date-field">
+                <input id="date" name="date" type="date" aria-label="날짜 (필수)" required>
+              </label>
+              <label class="repeat-check">
+                <input id="eventRepeatInput" type="checkbox">
+                <span>반복</span>
+              </label>
+            </div>
 
             <div class="compact-time-range">
               <label>
@@ -190,6 +215,40 @@
                 <input id="endTime" name="endTime" type="text" inputmode="numeric" maxlength="5" pattern="(?:[01]?[0-9]|2[0-3]):?[0-5][0-9]" placeholder="18:30" aria-label="종료 시간" autocomplete="off">
               </label>
             </div>
+          </div>
+
+          <div class="recurrence-options" id="recurrenceOptions" hidden>
+            <p class="recurrence-master-note" id="recurrenceMasterNote" hidden></p>
+            <label>
+              <span>반복</span>
+              <select id="recurrenceFrequency">
+                <option value="daily">매일</option>
+                <option value="weekly" selected>매주</option>
+                <option value="monthly">매월</option>
+              </select>
+            </label>
+            <label>
+              <span>간격</span>
+              <select id="recurrenceInterval">
+                <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+              </select>
+            </label>
+            <label>
+              <span>종료일</span>
+              <input id="recurrenceEndDate" type="date">
+            </label>
+            <fieldset class="recurrence-weekdays" id="recurrenceWeekdays">
+              <legend>요일</legend>
+              <div>
+                <label><input type="checkbox" value="0"><span>일</span></label>
+                <label><input type="checkbox" value="1"><span>월</span></label>
+                <label><input type="checkbox" value="2"><span>화</span></label>
+                <label><input type="checkbox" value="3"><span>수</span></label>
+                <label><input type="checkbox" value="4"><span>목</span></label>
+                <label><input type="checkbox" value="5"><span>금</span></label>
+                <label><input type="checkbox" value="6"><span>토</span></label>
+              </div>
+            </fieldset>
           </div>
 
           <div class="ios-form-group ios-settings-group" id="regularEventFields">
@@ -316,7 +375,6 @@
             </label>
           </div>
 
-          <button class="primary-button" id="saveButton" type="submit">일정 저장</button>
         </form>
 
         <form class="task-inline-form" id="taskForm" hidden>
@@ -329,19 +387,39 @@
             <label><span>시간</span><input id="taskDueTimeInput" type="text" inputmode="numeric" maxlength="5" placeholder="23:59"></label>
           </div>
           <label class="task-linked-field">
-            <span>연결 일정</span>
+            <span>연결 대상</span>
             <select id="taskEventSelect"><option value="">연결 안 함</option></select>
+          </label>
+          <label class="task-linked-field">
+            <span>상위 할 일</span>
+            <select id="taskParentSelect"><option value="">상위 항목 없음</option></select>
           </label>
           <label class="task-submission-field">
             <input id="taskSubmissionInput" type="checkbox">
             <span>제출 필요</span>
           </label>
+          <label class="task-submission-field">
+            <input id="taskRepeatInput" type="checkbox">
+            <span>반복 To Do</span>
+          </label>
+          <div class="task-repeat-options" id="taskRepeatOptions" hidden>
+            <label><span>주기</span><select id="taskRepeatFrequency"><option value="daily">매일</option><option value="weekly" selected>매주</option><option value="monthly">매월</option></select></label>
+            <label><span>간격</span><select id="taskRepeatInterval"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
+            <label><span>종료일</span><input id="taskRepeatEndDate" type="date"></label>
+            <fieldset id="taskRepeatWeekdays">
+              <legend>요일</legend>
+              <div>
+                <label><input type="checkbox" value="0"><span>일</span></label><label><input type="checkbox" value="1"><span>월</span></label><label><input type="checkbox" value="2"><span>화</span></label><label><input type="checkbox" value="3"><span>수</span></label><label><input type="checkbox" value="4"><span>목</span></label><label><input type="checkbox" value="5"><span>금</span></label><label><input type="checkbox" value="6"><span>토</span></label>
+              </div>
+            </fieldset>
+          </div>
           <label class="task-memo-field">
             <span>메모</span>
             <textarea id="taskMemoInput" rows="5" placeholder="필요한 내용을 자유롭게 적어두세요."></textarea>
           </label>
           <div class="task-dialog-actions">
             <div>
+              <button class="task-child-button" id="taskChildButton" type="button">+ 하위 할 일</button>
               <button class="task-archive-button" id="taskArchiveButton" type="button">보관</button>
               <button class="note-delete-button" id="taskDeleteButton" type="button">삭제</button>
             </div>
@@ -350,9 +428,13 @@
         </form>
 
         <details class="category-manager">
-          <summary>카테고리 관리</summary>
-          <p>⠿를 드래그해 순서를 바꿀 수 있어요. 이름 변경은 해당 카테고리의 모든 일정에 함께 적용됩니다.</p>
+          <summary>
+            <span>분류 관리</span>
+            <button class="category-manager-edit" id="categoryManagerEditButton" type="button">수정</button>
+          </summary>
+          <p>카테고리 안의 그룹을 한눈에 관리해요. 그룹을 드래그하면 순서를 바꾸거나 다른 카테고리로 옮길 수 있습니다.</p>
           <div class="category-manager-list" id="categoryManagerList"></div>
+          <div class="group-manager-list" id="groupManagerList" hidden></div>
         </details>
       </aside>
 
@@ -469,6 +551,11 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="./supabase-config.js"></script>
-  <script src="./schedule.js"></script>
+  <script src="./js/state.js"></script>
+  <script src="./js/storage-sync.js"></script>
+  <script src="./js/schedule-logic.js"></script>
+  <script src="./js/render-views.js"></script>
+  <script src="./js/forms-and-search.js"></script>
+  <script src="./js/bindings-and-init.js"></script>
 </body>
 </html>
