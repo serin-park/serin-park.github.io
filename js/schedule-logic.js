@@ -165,6 +165,17 @@ function renderClassificationFilterToolbar() {
   const toolbar = element("div", "category-filter-toolbar classification-filter-toolbar");
   const header = element("div", "category-filter-header");
   header.append(element("strong", "", "분류 필터"), element("span", "", "선택한 날짜에 있는 분류만 표시"));
+  const toggle = element(
+    "button",
+    "classification-filter-toggle",
+    classificationFilterCollapsed ? "필터 펼치기" : "필터 접기"
+  );
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", String(!classificationFilterCollapsed));
+  toggle.addEventListener("click", () => {
+    classificationFilterCollapsed = !classificationFilterCollapsed;
+    renderAll();
+  });
   const actions = element("div", "category-filter-actions");
   const selectAll = element("button", "text-button", "모두 선택");
   const clearAll = element("button", "text-button", "모두 해제");
@@ -180,8 +191,13 @@ function renderClassificationFilterToolbar() {
     renderAll();
   });
   actions.append(selectAll, clearAll);
-  header.append(actions);
+  const headerControls = element("div", "classification-filter-header-controls");
+  headerControls.append(actions, toggle);
+  header.append(headerControls);
   toolbar.append(header);
+
+  const content = element("div", "classification-filter-content");
+  content.hidden = classificationFilterCollapsed;
 
   const links = visibleClassificationLinks();
   if (classificationAllCleared) links.forEach((link) => excludedClassificationKeys.add(classificationKey(link)));
@@ -235,7 +251,8 @@ function renderClassificationFilterToolbar() {
     node.append(groupList);
     tree.append(node);
   });
-  toolbar.append(tree);
+  content.append(tree);
+  toolbar.append(content);
   return toolbar;
 }
 
@@ -683,7 +700,13 @@ function travelDepartureDate(event) {
     : null;
   if (plan.naverDepartureTime) {
     const departure = new Date(`${event.date}T${plan.naverDepartureTime}:00`);
-    if (eventStart && departure > eventStart) departure.setDate(departure.getDate() - 1);
+    // 자정을 넘겨 출발하는 진짜 "밤샘 이동"만 하루 전으로 보정한다. 네이버에서
+    // 다시 확인해야 하는(출발 시간이 일정 시작 시각과 살짝 어긋난) 경우까지
+    // 하루를 통째로 당겨버리면 미래 이동이 갑자기 과거로 취급돼 "다음 이동"
+    // 목록에서 사라져버리는 문제가 있었다.
+    if (eventStart && departure > eventStart && departure - eventStart > 12 * 60 * 60 * 1000) {
+      departure.setDate(departure.getDate() - 1);
+    }
     return Number.isNaN(departure.getTime()) ? null : departure;
   }
 
@@ -692,57 +715,182 @@ function travelDepartureDate(event) {
   return new Date(eventStart.getTime() - duration * 60 * 1000);
 }
 
-function nextUpcomingTravelEvent() {
-  const now = new Date();
+// 캘린더에서 선택한 날짜와 무관하게 저장된 이동 계획을 모두 출발 시각순으로
+// 돌려준다. 지도 옆 이동 카드는 언제나 다음 이동을 보여주고, 화살표로 전체
+// 이동 계획을 탐색할 수 있다.
+function allTravelPlans() {
   return events
+    .filter((event) => event.travelPlan)
     .map((event) => ({ event, departure: travelDepartureDate(event) }))
-    .filter(({ event, departure }) => (
-      event.travelPlan
-      && departure
-      && departure >= now
-      && (hasExplicitDateFilter
-        ? dateMatchesActiveFilter(event.date)
-        : event.date === selectedMapDate)
-    ))
-    .sort((a, b) => a.departure - b.departure)[0] || null;
+    .sort((a, b) => {
+      if (a.departure && b.departure) return a.departure - b.departure;
+      if (a.departure) return -1;
+      if (b.departure) return 1;
+      return (a.event.startTime || "").localeCompare(b.event.startTime || "");
+    });
+}
+
+// 사용자가 화살표로 고른 일정이 있으면 그걸 유지하고, 없으면 현재 시각 이후의
+// 가장 가까운 이동 일정(미래 일정이 없으면 목록의 첫 일정)을 보여준다.
+function selectedTravelPlanEntry(list) {
+  if (!list.length) return null;
+  if (selectedTravelEventId) {
+    const found = list.find(({ event }) => event.id === selectedTravelEventId);
+    if (found) return found;
+  }
+
+  const now = new Date();
+  return list.find(({ departure }) => departure && departure >= now) || list[0];
 }
 
 function renderUpcomingTravel() {
-  const upcoming = nextUpcomingTravelEvent();
+  const list = allTravelPlans();
   const today = dateInputValue(new Date());
-  const layoutChanged = plannerMapContent.classList.contains("has-upcoming-travel") !== Boolean(upcoming);
-  plannerMapContent.classList.toggle("has-upcoming-travel", Boolean(upcoming));
-  plannerMapPanel.classList.toggle("has-upcoming-travel", Boolean(upcoming));
-  upcomingTravelCard.classList.toggle("is-today", Boolean(upcoming && upcoming.event.date === today));
-  upcomingTravelCard.hidden = !upcoming;
+  const now = new Date();
+  const layoutChanged = plannerMapContent.classList.contains("has-upcoming-travel") !== Boolean(list.length);
+  plannerMapContent.classList.toggle("has-upcoming-travel", Boolean(list.length));
+  plannerMapPanel.classList.toggle("has-upcoming-travel", Boolean(list.length));
+  upcomingTravelCard.hidden = !list.length;
+  upcomingTravelCard.replaceChildren();
+  upcomingTravelToolbar.hidden = !list.length;
+  upcomingTravelToolbar.replaceChildren();
   if (layoutChanged && plannerMap) {
     window.setTimeout(() => plannerMap.invalidateSize(), 0);
   }
-  if (!upcoming) {
-    upcomingTravelSteps.replaceChildren();
+  if (!list.length) {
+    selectedTravelEventId = null;
+    selectedTravelWalkStepIndex = null;
     return;
   }
 
-  const { event, departure } = upcoming;
+  const previouslySelectedEventId = selectedTravelEventId;
+  const selected = selectedTravelPlanEntry(list);
+  selectedTravelEventId = selected ? selected.event.id : null;
+  if (previouslySelectedEventId !== selectedTravelEventId) selectedTravelWalkStepIndex = null;
+  const selectedIndex = Math.max(0, list.findIndex(({ event }) => event.id === selectedTravelEventId));
+  const { event, departure } = list[selectedIndex];
   const plan = event.travelPlan;
-  const destination = eventStartMapPoint(event);
-  const departureClock = `${String(departure.getHours()).padStart(2, "0")}:${String(departure.getMinutes()).padStart(2, "0")}`;
-  upcomingTravelTitle.textContent = event.title;
-  upcomingTravelDate.textContent = compactDate(event.date);
-  upcomingTravelRoute.replaceChildren(
-    element("strong", "", plan.originName || "출발지"),
-    document.createTextNode(` → ${destination?.name || event.location || event.title}`)
+  const isPast = Boolean(departure && departure < now);
+  const departureClock = departure
+    ? `${String(departure.getHours()).padStart(2, "0")}:${String(departure.getMinutes()).padStart(2, "0")}`
+    : "";
+  const card = element("div", [
+    "planner-travel-card",
+    "is-selected",
+    event.date === today ? "is-today" : "",
+    isPast ? "is-past" : ""
+  ].filter(Boolean).join(" "));
+
+  const travelSummary = element("div", "planner-travel-summary");
+  const travelTitleRow = element("div", "planner-travel-summary-title");
+  travelTitleRow.append(element("strong", "", event.title));
+  const mapStartDate = hasExplicitDateFilter ? timelineStartDate : selectedMapDate;
+  const mapEndDate = hasExplicitDateFilter ? timelineEndDate : selectedMapDate;
+  if (mapStartDate !== mapEndDate || event.date !== mapStartDate) {
+    travelTitleRow.append(element("time", "", compactDate(event.date, { includeWeekday: false })));
+  }
+  travelSummary.append(
+    element("span", "", list.length > 1 ? `이동 계획 ${selectedIndex + 1}/${list.length}` : "이동 계획"),
+    travelTitleRow
   );
-  renderTravelRouteSteps(upcomingTravelSteps, plan);
-  if (upcomingTravelSteps.hidden) {
-    upcomingTravelSteps.hidden = false;
-    const duration = Number(plan.durationMinutes);
-    upcomingTravelSteps.append(element(
+  const allRouteButton = element(
+    "button",
+    `planner-route-view-button${selectedTravelWalkStepIndex === null ? " is-active" : ""}`,
+    "전체 경로"
+  );
+  allRouteButton.type = "button";
+  allRouteButton.addEventListener("click", () => {
+    selectedTravelWalkStepIndex = null;
+    renderUpcomingTravel();
+    renderPlannerMap();
+  });
+  upcomingTravelToolbar.append(travelSummary, allRouteButton);
+  if (list.length > 1) {
+    const navigation = element("div", "planner-travel-navigation");
+    const previous = element("button", "", "‹");
+    const next = element("button", "", "›");
+    previous.type = next.type = "button";
+    previous.disabled = selectedIndex === 0;
+    next.disabled = selectedIndex === list.length - 1;
+    previous.setAttribute("aria-label", "이전 이동 계획");
+    next.setAttribute("aria-label", "다음 이동 계획");
+    previous.addEventListener("click", () => {
+      selectedTravelEventId = list[selectedIndex - 1].event.id;
+      selectedTravelWalkStepIndex = null;
+      renderUpcomingTravel();
+      renderPlannerMap();
+    });
+    next.addEventListener("click", () => {
+      selectedTravelEventId = list[selectedIndex + 1].event.id;
+      selectedTravelWalkStepIndex = null;
+      renderUpcomingTravel();
+      renderPlannerMap();
+    });
+    navigation.append(previous, next);
+    upcomingTravelToolbar.append(navigation);
+  }
+
+  const duration = Number(plan.durationMinutes);
+  const stepsSection = element("section", "travel-steps-preview planner-upcoming-travel-steps");
+  renderTravelRouteSteps(stepsSection, plan, {
+    showBoundary: false,
+    selectedWalkStepIndex: selectedTravelWalkStepIndex,
+    onWalkSelect: (stepIndex) => {
+      selectedTravelWalkStepIndex = stepIndex;
+      renderUpcomingTravel();
+      renderPlannerMap();
+    }
+  });
+  if (stepsSection.hidden) {
+    stepsSection.hidden = false;
+    stepsSection.append(element(
       "span",
       "planner-upcoming-travel-empty",
-      Number.isFinite(duration) ? `예상 소요 ${duration}분 · ${departureClock} 출발` : `${departureClock} 출발`
+      Number.isFinite(duration)
+        ? `예상 소요 ${duration}분${departureClock ? ` · ${departureClock} 출발` : ""}`
+        : (departureClock ? `${departureClock} 출발` : "")
     ));
   }
+  card.append(stepsSection);
+  upcomingTravelCard.append(card);
+}
+
+function travelRouteWaypoints(plan, walkStepIndex = null) {
+  const allSteps = Array.isArray(plan?.routeSteps) ? plan.routeSteps : [];
+  const steps = Number.isInteger(walkStepIndex) ? [allSteps[walkStepIndex]].filter(Boolean) : allSteps;
+  const points = [];
+  steps.forEach((step) => {
+    if (step.type === "walk") {
+      const exitGuide = String(step.exit || "").trim();
+      const exitMarksStart = /에서(?:\s|$)/.test(exitGuide);
+      if (Number.isFinite(step.startLat) && Number.isFinite(step.startLng)) {
+        points.push({
+          lat: step.startLat,
+          lng: step.startLng,
+          kind: "walk",
+          role: "start",
+          label: exitMarksStart ? exitGuide : "도보 시작"
+        });
+      }
+      if (Number.isFinite(step.goalLat) && Number.isFinite(step.goalLng)) {
+        points.push({
+          lat: step.goalLat,
+          lng: step.goalLng,
+          kind: "walk",
+          role: "end",
+          label: exitMarksStart ? "도보 끝" : (exitGuide || "도보 끝")
+        });
+      }
+    } else {
+      if (Number.isFinite(step.boardLat) && Number.isFinite(step.boardLng)) {
+        points.push({ lat: step.boardLat, lng: step.boardLng, kind: step.type, label: `${step.boardStation || "승차"} 승차` });
+      }
+      if (Number.isFinite(step.alightLat) && Number.isFinite(step.alightLng)) {
+        points.push({ lat: step.alightLat, lng: step.alightLng, kind: step.type, label: `${step.alightStation || "하차"} 하차` });
+      }
+    }
+  });
+  return points;
 }
 
 function renderPlannerMap() {
@@ -801,6 +949,38 @@ function renderPlannerMap() {
       .addTo(plannerMapMarkers);
   }
 
+  // 선택된 날짜에 이동 계획이 있고(카드를 눌러 고른 게 있으면 그걸, 없으면
+  // "다음 출발" 일정을 기본으로), 네이버지도에서 가져올 때 좌표까지 같이
+  // 받아왔다면(승차/하차 정류장, 도보 시작·끝 지점) 지도에 같이 표시해서 어느
+  // 정류장에서 타야 하는지 네이버지도를 다시 열지 않고도 확인할 수 있게 해준다.
+  const selectedTravel = selectedTravelPlanEntry(allTravelPlans());
+  const selectedWalkStep = Number.isInteger(selectedTravelWalkStepIndex) ? selectedTravelWalkStepIndex : null;
+  const routeWaypoints = selectedTravel
+    ? travelRouteWaypoints(selectedTravel.event.travelPlan, selectedWalkStep)
+    : [];
+  let routeFocusCoordinates = null;
+  if (routeWaypoints.length) {
+    const routeLatLngs = routeWaypoints.map((point) => [point.lat, point.lng]);
+    coordinates.push(...routeLatLngs);
+    if (selectedWalkStep !== null) routeFocusCoordinates = routeLatLngs;
+    window.L.polyline(routeLatLngs, {
+      color: "#ff9500",
+      weight: selectedWalkStep !== null ? 5 : 3,
+      opacity: 0.9,
+      dashArray: selectedWalkStep !== null ? null : "6 6"
+    }).addTo(plannerMapMarkers);
+    routeWaypoints.forEach((point) => {
+      const marker = window.L.circleMarker([point.lat, point.lng], {
+        radius: selectedWalkStep !== null ? 7 : 5,
+        color: "#ffffff",
+        weight: 2,
+        fillColor: selectedWalkStep !== null && point.role === "start" ? "#34c759" : "#ff9500",
+        fillOpacity: 0.95
+      }).bindPopup(element("strong", "", point.label)).addTo(plannerMapMarkers);
+      if (selectedWalkStep !== null) marker.bindTooltip(point.label, { permanent: true, direction: "top", offset: [0, -7] });
+    });
+  }
+
   if (!coordinates.length) {
     plannerMapEmpty.hidden = false;
     plannerMapEmpty.textContent = offlineEvents.length
@@ -809,10 +989,11 @@ function renderPlannerMap() {
     plannerMap.setView([36.35, 127.8], 6);
   } else {
     plannerMapEmpty.hidden = true;
-    if (coordinates.length === 1) {
-      plannerMap.setView(coordinates[0], 14);
+    const viewCoordinates = routeFocusCoordinates?.length ? routeFocusCoordinates : coordinates;
+    if (viewCoordinates.length === 1) {
+      plannerMap.setView(viewCoordinates[0], 16);
     } else {
-      plannerMap.fitBounds(coordinates, { padding: [32, 32], maxZoom: 14 });
+      plannerMap.fitBounds(viewCoordinates, { padding: [32, 32], maxZoom: selectedWalkStep !== null ? 17 : 14 });
     }
   }
   window.setTimeout(() => plannerMap.invalidateSize(), 0);
@@ -1029,20 +1210,26 @@ function travelStationTerminal(time, station, suffix, note = "", showTime = true
   return terminal;
 }
 
-function renderTravelRouteSteps(container, plan = {}) {
+function renderTravelRouteSteps(
+  container,
+  plan = {},
+  { showBoundary = true, selectedWalkStepIndex = null, onWalkSelect = null } = {}
+) {
   container.replaceChildren();
   const steps = normalizeTravelRouteSteps(plan.routeSteps);
   container.hidden = !steps.length;
   if (!steps.length) return;
 
-  const boundary = element("div", "travel-route-boundary");
-  boundary.append(
-    element("strong", "", `${plan.naverDepartureTime || "—"} 출발`),
-    element("span", "", `${plan.naverArrivalTime || "—"} 도착`)
-  );
-  container.append(boundary);
+  if (showBoundary) {
+    const boundary = element("div", "travel-route-boundary");
+    boundary.append(
+      element("strong", "", `${plan.naverDepartureTime || "—"} 출발`),
+      element("span", "", `${plan.naverArrivalTime || "—"} 도착`)
+    );
+    container.append(boundary);
+  }
 
-  steps.forEach((step) => {
+  steps.forEach((step, stepIndex) => {
     const item = element("article", `travel-route-step is-${step.type}`);
     const icon = element("span", "travel-step-icon", { walk: "🚶", subway: "🚇", bus: "🚌" }[step.type]);
     const body = element("div", "travel-step-body");
@@ -1055,6 +1242,26 @@ function renderTravelRouteSteps(container, plan = {}) {
       ].filter(Boolean).join(" · ");
       const details = [movement, step.exit ? `(${step.exit})` : ""].filter(Boolean).join(" ");
       if (details) body.append(element("span", "travel-step-detail", details));
+      if (onWalkSelect) {
+        const hasCoordinates = Number.isFinite(step.startLat)
+          && Number.isFinite(step.startLng)
+          && Number.isFinite(step.goalLat)
+          && Number.isFinite(step.goalLng);
+        if (hasCoordinates) {
+          item.classList.add("is-map-selectable");
+          item.classList.toggle("is-map-selected", selectedWalkStepIndex === stepIndex);
+          item.tabIndex = 0;
+          item.setAttribute("role", "button");
+          item.setAttribute("aria-pressed", String(selectedWalkStepIndex === stepIndex));
+          item.setAttribute("aria-label", `${details || "도보 구간"} 시작점과 끝점 지도에서 보기`);
+          item.addEventListener("click", () => onWalkSelect(stepIndex));
+          item.addEventListener("keydown", (keyEvent) => {
+            if (keyEvent.key !== "Enter" && keyEvent.key !== " ") return;
+            keyEvent.preventDefault();
+            onWalkSelect(stepIndex);
+          });
+        }
+      }
     } else {
       const heading = element("div", "travel-step-heading");
       const lines = step.type === "bus" && step.alternateLines.length
@@ -1136,4 +1343,3 @@ function openTravelPlanner(eventId) {
   updateTravelLinks();
   travelDialog.showModal();
 }
-

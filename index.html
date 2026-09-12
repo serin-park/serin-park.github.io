@@ -91,6 +91,7 @@
               </label>
               <button id="homeLocationButton" type="button">집 설정</button>
             </div>
+            <div class="planner-travel-toolbar" id="upcomingTravelToolbar" aria-label="이동 계획 전환" hidden></div>
           </div>
           <div class="home-location-editor" id="homeLocationEditor" hidden>
             <div class="home-location-editor-header">
@@ -110,17 +111,7 @@
               <div class="planner-map" id="plannerMap" aria-label="선택한 날짜의 오프라인 일정 지도"></div>
               <div class="planner-map-empty" id="plannerMapEmpty" hidden></div>
             </div>
-            <aside class="planner-upcoming-travel" id="upcomingTravelCard" aria-label="가장 가까운 이동 계획" hidden>
-              <div class="planner-upcoming-travel-heading">
-                <div>
-                  <span>NEXT TRAVEL</span>
-                  <strong id="upcomingTravelTitle"></strong>
-                </div>
-                <time id="upcomingTravelDate"></time>
-              </div>
-              <div class="planner-upcoming-travel-route" id="upcomingTravelRoute"></div>
-              <section class="travel-steps-preview planner-upcoming-travel-steps" id="upcomingTravelSteps"></section>
-            </aside>
+            <aside class="planner-upcoming-travel" id="upcomingTravelCard" aria-label="이동 계획" hidden></aside>
           </div>
         </div>
       </section>
@@ -139,6 +130,7 @@
             <button class="primary-button header-save-button" id="saveButton" type="submit" form="eventForm">일정 저장</button>
           </div>
         </div>
+        <div class="form-card-scroll">
         <div class="form-placeholder" id="formPlaceholder">
           <strong>일정을 선택해보세요.</strong>
           <p>오른쪽에서 일정을 펼치면 정보가 여기에 표시돼요.</p>
@@ -149,7 +141,9 @@
 
           <div class="ios-main-row title-only-row">
             <label class="ios-standalone-field title-field">
-              <input id="title" name="title" type="text" placeholder="일정명" aria-label="일정명 (필수)" required>
+              <input id="titleGhost" class="title-ghost-input" type="text" tabindex="-1" aria-hidden="true" disabled>
+              <input id="title" name="title" type="text" placeholder="일정명" aria-label="일정명 (필수)" autocomplete="off" required>
+              <button type="button" id="titleAutofillHint" class="title-autofill-hint" hidden aria-label="이전 일정 정보 채우기 (Tab)">Tab ↹</button>
             </label>
           </div>
 
@@ -436,6 +430,7 @@
           <div class="category-manager-list" id="categoryManagerList"></div>
           <div class="group-manager-list" id="groupManagerList" hidden></div>
         </details>
+        </div>
       </aside>
 
       <section class="schedule-panel">

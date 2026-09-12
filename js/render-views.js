@@ -446,16 +446,48 @@ function renderTimeline() {
     return groups;
   }, {});
 
+  const today = dateInputValue(new Date());
+  const pastDates = Object.keys(byDate).filter((date) => date < today);
+  if (pastDates.length) {
+    const pastEntryCount = pastDates.reduce((count, date) => count + byDate[date].length, 0);
+    const pastToggle = element("button", "past-timeline-toggle");
+    pastToggle.type = "button";
+    pastToggle.setAttribute("aria-expanded", String(!pastTimelineDatesCollapsed));
+    pastToggle.append(
+      element("span", "", pastTimelineDatesCollapsed
+        ? `오늘 이전 일정 ${pastEntryCount}개 펼치기`
+        : "오늘 이전 일정 모두 접기"),
+      element("span", "past-timeline-toggle-icon")
+    );
+    pastToggle.addEventListener("click", () => {
+      pastTimelineDatesCollapsed = !pastTimelineDatesCollapsed;
+      renderTimeline();
+    });
+    timelineView.append(pastToggle);
+  }
+
   Object.entries(byDate).forEach(([date, dateEntries]) => {
-    const group = element("section", "date-group");
-    const label = element("div", `date-label${date === dateInputValue(new Date()) ? " is-today" : ""}`);
+    if (pastTimelineDatesCollapsed && date < today) return;
+    const collapsed = collapsedTimelineDates.has(date);
+    const group = element("section", `date-group${collapsed ? " is-collapsed" : ""}`);
+    const label = element("button", `date-label${date === today ? " is-today" : ""}`);
+    label.type = "button";
+    label.setAttribute("aria-expanded", String(!collapsed));
     const dateObject = new Date(`${date}T00:00:00`);
     label.append(
       element("strong", "", compactDate(date, { includeWeekday: false })),
-      element("span", "", `(${["일", "월", "화", "수", "목", "금", "토"][dateObject.getDay()]})`)
+      element("span", "date-weekday", `(${["일", "월", "화", "수", "목", "금", "토"][dateObject.getDay()]})`),
+      element("span", "date-event-count", `${dateEntries.length}개`),
+      element("span", "date-group-toggle", collapsed ? "일정 펼치기" : "일정 접기")
     );
+    label.addEventListener("click", () => {
+      if (collapsedTimelineDates.has(date)) collapsedTimelineDates.delete(date);
+      else collapsedTimelineDates.add(date);
+      renderTimeline();
+    });
 
     const list = element("div", "date-events");
+    list.hidden = collapsed;
     dateEntries.forEach((entry) => {
       const { event } = entry;
       if (entry.kind === "submission") {
@@ -493,14 +525,28 @@ function renderCategories() {
     .filter((category) => grouped[category]?.length)
     .forEach((category) => {
       const categoryEvents = grouped[category] || [];
-      const card = element("article", "category-card");
-      const heading = element("div", "category-heading");
-      heading.append(
-        element("h2", "", category),
-        element("span", "", `${categoryEvents.length}개`)
+      const collapsed = collapsedCategoryCards.has(category);
+      const card = element("article", `category-card${collapsed ? " is-collapsed" : ""}`);
+      const heading = element("button", "category-heading");
+      heading.type = "button";
+      heading.setAttribute("aria-expanded", String(!collapsed));
+      const headingMeta = element("span", "category-heading-meta");
+      headingMeta.append(
+        element("span", "category-heading-count", `${categoryEvents.length}개`),
+        element("span", "category-card-toggle", collapsed ? "일정 펼치기" : "일정 접기")
       );
+      heading.append(
+        element("strong", "category-heading-title", category),
+        headingMeta
+      );
+      heading.addEventListener("click", () => {
+        if (collapsedCategoryCards.has(category)) collapsedCategoryCards.delete(category);
+        else collapsedCategoryCards.add(category);
+        renderCategories();
+      });
 
       const list = element("div", "category-events");
+      list.hidden = collapsed;
       categoryEvents.forEach((event) => {
         list.append(eventCard(event, {
           showCategory: false,
@@ -580,11 +626,26 @@ function renderCategoryControls() {
         const groupInput = document.createElement("input");
         groupInput.type = "text";
         groupInput.value = group.name;
+        groupInput.size = Math.max(2, group.name.length);
+        groupInput.setAttribute("aria-label", `${group.name} 그룹 이름`);
         const groupSave = element("button", "", "변경");
         groupSave.type = "button";
+        groupSave.hidden = true;
+        const syncGroupDirty = () => {
+          groupInput.size = Math.max(2, groupInput.value.length);
+          groupSave.hidden = groupInput.value.trim() === group.name || !groupInput.value.trim();
+        };
+        groupInput.addEventListener("input", syncGroupDirty);
+        groupInput.addEventListener("keydown", (keyEvent) => {
+          if (keyEvent.key === "Enter") {
+            keyEvent.preventDefault();
+            renameEventGroup(group.id, groupInput.value);
+          }
+        });
         groupSave.addEventListener("click", () => renameEventGroup(group.id, groupInput.value));
         const groupRemove = element("button", "group-manager-delete", "삭제");
         groupRemove.type = "button";
+        groupRemove.setAttribute("aria-label", `${group.name} 그룹 삭제`);
         groupRemove.addEventListener("click", () => deleteEventGroup(group.id));
         groupRow.append(groupInput, groupSave, groupRemove);
       } else {
@@ -724,6 +785,81 @@ function renderEventGroupOptions() {
     option.label = `${group.category} · ${group.name}`;
     eventGroupOptions.append(option);
   });
+}
+
+function latestEventWithTitlePrefix(prefix) {
+  const typed = String(prefix || "").trim();
+  if (typed.length < 2) return null;
+  const target = typed.toLocaleLowerCase("ko-KR");
+  const matches = events.filter((event) => (
+    !isTravelEvent(event) && String(event.title || "").trim().toLocaleLowerCase("ko-KR").startsWith(target)
+  ));
+  if (!matches.length) return null;
+  return matches.sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0];
+}
+
+function updateTitleAutocomplete() {
+  const typed = titleInput.value;
+  const match = formMode === "create" ? latestEventWithTitlePrefix(typed) : null;
+  titleSuggestionMatch = match;
+  if (!match) {
+    titleGhostInput.value = "";
+    titleField.classList.remove("has-suggestion");
+    titleAutofillHint.hidden = true;
+    return;
+  }
+  titleGhostInput.value = typed + match.title.slice(typed.length);
+  titleField.classList.add("has-suggestion");
+  titleAutofillHint.hidden = false;
+}
+
+function acceptTitleSuggestion() {
+  if (!titleSuggestionMatch) return;
+  const match = titleSuggestionMatch;
+  titleInput.value = match.title;
+  const caret = titleInput.value.length;
+  titleInput.setSelectionRange(caret, caret);
+  applyEventTitleAutofill(match);
+  titleGhostInput.value = "";
+  titleField.classList.remove("has-suggestion");
+  titleAutofillHint.hidden = true;
+  titleSuggestionMatch = null;
+}
+
+function clearTitleAutocomplete() {
+  titleSuggestionMatch = null;
+  titleGhostInput.value = "";
+  titleField.classList.remove("has-suggestion");
+  titleAutofillHint.hidden = true;
+}
+
+function applyEventTitleAutofill(sourceEvent) {
+  if (!sourceEvent) return;
+  document.querySelector('input[name="eventKind"][value="regular"]').checked = true;
+  renderClassificationInputs(sourceEvent.classifications);
+  document.querySelector("#category").value = sourceEvent.category || "ETC";
+  eventGroupInput.value = groupForId(sourceEvent.groupId)?.name || "";
+  document.querySelector("#startTime").value = sourceEvent.startTime || "";
+  document.querySelector("#endTime").value = sourceEvent.endTime || "";
+  const locationType = inferredLocationType(sourceEvent);
+  document.querySelector(`input[name="locationType"][value="${locationType}"]`).checked = true;
+  document.querySelector("#location").value = sourceEvent.location || "";
+  locationDetailInput.value = sourceEvent.locationDetail || "";
+  selectedLocation = hasMapCoordinates(sourceEvent)
+    ? {
+        latitude: Number(sourceEvent.latitude),
+        longitude: Number(sourceEvent.longitude),
+        name: sourceEvent.location || "장소",
+        address: sourceEvent.locationAddress || sourceEvent.location || ""
+      }
+    : null;
+  locationSearchStatus.textContent = selectedLocation ? "이전 일정의 장소를 불러왔어요." : "";
+  document.querySelector("#url").value = sourceEvent.url || "";
+  const reservationStatus = inferredReservationStatus(sourceEvent);
+  document.querySelector(`input[name="reservationStatus"][value="${reservationStatus}"]`).checked = true;
+  syncLocationFields();
+  syncConditionalFields();
+  renderEventGroupOptions();
 }
 
 function ensureEventGroup(name, category) {
@@ -1394,4 +1530,3 @@ function renderAll() {
   renderCategoryControls();
   renderPlannerOverview();
 }
-

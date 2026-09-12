@@ -351,6 +351,29 @@ document.querySelector("#date").addEventListener("change", () => {
   if (eventRepeatInput.checked) syncEventRecurrenceFields({ initialize: true });
 });
 
+titleInput.addEventListener("input", updateTitleAutocomplete);
+
+titleInput.addEventListener("keydown", (keyEvent) => {
+  if (keyEvent.key !== "Tab" || keyEvent.shiftKey || !titleSuggestionMatch) return;
+  if (keyEvent.isComposing || keyEvent.keyCode === 229) {
+    // 한글 입력 중 마지막 음절이 아직 조합 중일 때 바로 값을 덮어쓰면, 조합이
+    // 끝나며 커밋되는 글자가 뒤에 한 번 더 붙어버림(예: "필라테"+Tab →
+    // "필라테스테"). 포커스 이동은 막고, 조합이 끝난 뒤에 적용한다.
+    keyEvent.preventDefault();
+    titleInput.addEventListener("compositionend", () => acceptTitleSuggestion(), { once: true });
+    return;
+  }
+  acceptTitleSuggestion();
+});
+
+titleInput.addEventListener("blur", clearTitleAutocomplete);
+
+titleAutofillHint.addEventListener("mousedown", (mouseEvent) => mouseEvent.preventDefault());
+titleAutofillHint.addEventListener("click", () => {
+  acceptTitleSuggestion();
+  titleInput.focus();
+});
+
 form.addEventListener("click", (clickEvent) => {
   if (formMode !== "view") return;
   if (!currentUser) {
@@ -790,6 +813,6 @@ syncLocationFields();
 syncConditionalFields();
 applyFormMode("idle");
 initializePlannerMap();
-renderAll();
 initializeCloudSync();
+renderAll();
 window.setInterval(renderUpcomingTravel, 60 * 1000);

@@ -182,6 +182,12 @@ function removeStoredTravelSummaryImages() {
   if (changed) saveEvents();
 }
 
+function normalizedCoord(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function normalizeTravelRouteSteps(rawSteps) {
   if (!Array.isArray(rawSteps)) return [];
   return rawSteps.slice(0, 24).map((raw) => {
@@ -207,7 +213,17 @@ function normalizeTravelRouteSteps(rawSteps) {
       boardingPosition: String(raw?.boardingPosition || "").slice(0, 80),
       exitDoor: String(raw?.exitDoor || "").slice(0, 80),
       exit: String(raw?.exit || "").slice(0, 40),
-      distance: String(raw?.distance || "").slice(0, 40)
+      distance: String(raw?.distance || "").slice(0, 40),
+      // 네이버 대중교통 API 응답에서 뽑아낸 좌표(있을 때만). 도보 스텝은 시작/끝,
+      // 지하철·버스 스텝은 승차/하차 좌표. 지도 오버레이용.
+      boardLat: normalizedCoord(raw?.boardLat),
+      boardLng: normalizedCoord(raw?.boardLng),
+      alightLat: normalizedCoord(raw?.alightLat),
+      alightLng: normalizedCoord(raw?.alightLng),
+      startLat: normalizedCoord(raw?.startLat),
+      startLng: normalizedCoord(raw?.startLng),
+      goalLat: normalizedCoord(raw?.goalLat),
+      goalLng: normalizedCoord(raw?.goalLng)
     };
   }).filter((step) => step.type === "walk" || step.boardStation || step.line);
 }
@@ -982,17 +998,23 @@ async function sendLoginLink() {
   authLoginButton.disabled = true;
   authMessage.textContent = "로그인 링크를 보내는 중…";
   const redirectUrl = `${window.location.origin}${window.location.pathname}`;
-  const { error } = await supabaseClient.auth.signInWithOtp({
-    email,
-    options: {
-      emailRedirectTo: redirectUrl,
-      shouldCreateUser: true
-    }
-  });
-  authLoginButton.disabled = false;
-  authMessage.textContent = error
-    ? `로그인 링크를 보내지 못했어요: ${error.message}`
-    : "메일을 확인해주세요. 받은 링크는 로그인할 기기에서 열어주세요.";
+  try {
+    const { error } = await supabaseClient.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: redirectUrl,
+        shouldCreateUser: true
+      }
+    });
+    authMessage.textContent = error
+      ? `로그인 링크를 보내지 못했어요: ${error.message}`
+      : "메일을 확인해주세요. 받은 링크는 로그인할 기기에서 열어주세요.";
+  } catch (error) {
+    console.error("로그인 링크 요청에 실패했습니다.", error);
+    authMessage.textContent = "로그인 요청이 차단되었어요. 브라우저 확장 프로그램이나 네트워크 설정을 확인해주세요.";
+  } finally {
+    authLoginButton.disabled = false;
+  }
 }
 
 async function initializeCloudSync() {
@@ -1055,4 +1077,3 @@ async function initializeCloudSync() {
     updateAuthView();
   }
 }
-
